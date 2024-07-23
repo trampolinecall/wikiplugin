@@ -11,3 +11,7 @@ Add the following into init.vim:
 ```vim
 Plug 'trampolinecall/wikiplugin', { 'do': 'cargo build --release' }
 ```
+
+# Todo
+
+- [ ] more consistent error handling with panics
