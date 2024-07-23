@@ -17,3 +17,4 @@ Plug 'trampolinecall/wikiplugin', { 'do': 'cargo build --release' }
 - [ ] more consistent error handling with panics
 - [ ] write documentation about config options
 - [ ] find some way to automatically make sure that messages sent are the same on the lua and rust side
+- [ ] add custom filetype

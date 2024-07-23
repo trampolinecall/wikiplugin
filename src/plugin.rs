@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use futures_io::AsyncWrite;
-use nvim_rs::{compat::tokio::Compat, Neovim};
+use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
 use crate::{connection, error::Error};
 
@@ -28,6 +27,7 @@ impl Config {
 
 pub enum Message {
     NewNote { directory: String, focus: bool },
+    OpenIndex, // TODO: configurable index file name
     Error(String),
 }
 
@@ -42,32 +42,37 @@ impl Message {
         }
 
         macro_rules! parse_params {
-            ($n_params:literal, $(($pname:ident, $parse_function:expr)),+, $method_name:ident, $params:ident, || $result:expr) => {
-                if $params.len() == $n_params {
-                    #[allow(unused_assignments)]
+            ([$(($pname:ident, $parse_function:expr)),*], $method_name:ident, $params:ident, || $result:expr) => {
+                {
+                    // we need the "asdf" so that if the method accepts no parameters, the array's type can be inferred to be an array of &'static str
+                    let num_params = ["asdf" as &'static str, $(stringify!($pname)),*].len() - 1;
+                    if $params.len() == num_params {
+                        #[allow(unused_assignments, unused_variables, unused_mut, clippy::redundant_closure_call)]
 
-                    let result = (|| {
-                    let mut param_index = 0;
-                        $(
-                            let $pname = $parse_function(&$method_name, stringify!($pname), &$params[param_index])?;
-                            param_index += 1;
-                        )+
+                        let result = (|| {
+                        let mut param_index = 0;
+                            $(
+                                let $pname = $parse_function(&$method_name, stringify!($pname), &$params[param_index])?;
+                                param_index += 1;
+                            )*
 
-                        Ok::<_, String>($result)
-                    })();
+                            Ok::<_, String>($result)
+                        })();
 
-                    match result {
-                        Ok(res) => res,
-                        Err(err) => Message::Error(err),
+                        match result {
+                            Ok(res) => res,
+                            Err(err) => Message::Error(err),
+                        }
+                    } else {
+                        Message::Error(format!("method '{}' needs {} parameters", $method_name, num_params))
                     }
-                } else {
-                    Message::Error(format!("method '{}' needs {} parameters", $method_name, $n_params))
                 }
             };
         }
 
         match &*method {
-            "new_note" => parse_params!(2, (directory, to_string), (focus, to_bool), method, args, || Message::NewNote { directory, focus }),
+            "new_note" => parse_params!([(directory, to_string), (focus, to_bool)], method, args, || Message::NewNote { directory, focus }),
+            "open_index" => parse_params!([], method, args, || Message::OpenIndex),
             _ => Message::Error(format!("unknown method '{method}' with params {args:?}")),
         }
     }
@@ -79,7 +84,7 @@ pub struct WikiPlugin {
 }
 
 impl WikiPlugin {
-    async fn new_note<W: Send + Unpin + AsyncWrite>(&self, nvim: &mut Neovim<W>, directory: String, focus: bool) -> Result<(), Error> {
+    async fn new_note(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>, directory: String, focus: bool) -> Result<Buffer<Compat<tokio::fs::File>>, Error> {
         let now = chrono::Local::now();
 
         let title = nvim.eval(r#"input("note name: ")"#).await?;
@@ -109,6 +114,14 @@ impl WikiPlugin {
             nvim.set_current_buf(&buf).await?;
         }
 
+        Ok(buf)
+    }
+
+    async fn open_index(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
+        let index_path = self.config.home_path.join("index.md");
+        let index_path: &str = index_path.to_str().ok_or_else(|| format!("invalid note index path {index_path:?}"))?;
+        nvim.cmd(vec![("cmd".into(), "edit".into()), ("args".into(), vec![nvim_rs::Value::from(index_path)].into())], vec![]).await?;
+
         Ok(())
     }
 }
@@ -121,7 +134,8 @@ impl nvim_rs::Handler for WikiPlugin {
         let message = Message::parse(name, args);
 
         let result = match message {
-            Message::NewNote { directory, focus } => self.new_note(&mut nvim, directory, focus).await,
+            Message::NewNote { directory, focus } => self.new_note(&mut nvim, directory, focus).await.map(|_| ()),
+            Message::OpenIndex => self.open_index(&mut nvim).await,
             Message::Error(e) => Err(e.into()),
         };
 

@@ -47,9 +47,14 @@ local function new_note(directory, focus)
     check_job_running()
     vim.fn.rpcnotify(job_id, "new_note", directory, focus)
 end
+local function open_index()
+    check_job_running()
+    vim.fn.rpcnotify(job_id, "open_index")
+end
 
 return {
     setup = setup,
 
     new_note = new_note,
+    open_index = open_index,
 }
