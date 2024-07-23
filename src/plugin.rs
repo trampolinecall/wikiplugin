@@ -83,6 +83,7 @@ impl WikiPlugin {
         let now = chrono::Local::now();
 
         let title = nvim.eval(r#"input("note name: ")"#).await?;
+        let title = title.as_str().expect("vim function input should always return a string");
         let buf_path = {
             let mut p = self.config.home_path.join(directory);
             p.push(now.format(&self.config.note_id_timestamp_format).to_string());
@@ -102,7 +103,7 @@ impl WikiPlugin {
         let buf = nvim.create_buf(true, false).await?;
         buf.set_name(buf_path.to_str().ok_or_else(|| format!("invalid buf path {buf_path:?}"))?).await?;
         buf.set_lines(0, 0, true, buf_contents).await?;
-        buf.set_option("filtype", "zet".into()).await?;
+        buf.set_option("filetype", "zet".into()).await?;
 
         if focus {
             nvim.set_current_buf(&buf).await?;

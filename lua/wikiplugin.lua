@@ -37,6 +37,19 @@ local function setup(config)
     end
 end
 
+local function check_job_running()
+    if job_id == 0 then
+        error("wikiplugin job is not running")
+    end
+end
+
+local function new_note(directory, focus)
+    check_job_running()
+    vim.fn.rpcnotify(job_id, "new_note", directory, focus)
+end
+
 return {
     setup = setup,
+
+    new_note = new_note,
 }
