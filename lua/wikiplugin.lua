@@ -43,6 +43,7 @@ local function check_job_running()
     end
 end
 
+-- TODO: automate these functions?
 local function new_note(directory, focus)
     check_job_running()
     vim.fn.rpcnotify(job_id, "new_note", directory, focus)
@@ -51,10 +52,15 @@ local function open_index()
     check_job_running()
     vim.fn.rpcnotify(job_id, "open_index")
 end
+local function new_note_and_insert_link()
+    check_job_running()
+    vim.fn.rpcnotify(job_id, "new_note_and_insert_link")
+end
 
 return {
     setup = setup,
 
     new_note = new_note,
     open_index = open_index,
+    new_note_and_insert_link = new_note_and_insert_link,
 }

@@ -1,8 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
+use pathdiff::diff_paths;
 
 use crate::{connection, error::Error};
+
+mod note;
 
 #[derive(Clone)]
 pub struct Config {
@@ -27,8 +30,9 @@ impl Config {
 
 pub enum Message {
     NewNote { directory: String, focus: bool },
-    OpenIndex, // TODO: configurable index file name
-    Error(String),
+    OpenIndex, // TODO: configurable index file name?
+    NewNoteAndInsertLink,
+    Invalid(String),
 }
 
 impl Message {
@@ -61,10 +65,10 @@ impl Message {
 
                         match result {
                             Ok(res) => res,
-                            Err(err) => Message::Error(err),
+                            Err(err) => Message::Invalid(err),
                         }
                     } else {
-                        Message::Error(format!("method '{}' needs {} parameters", $method_name, num_params))
+                        Message::Invalid(format!("method '{}' needs {} parameters", $method_name, num_params))
                     }
                 }
             };
@@ -73,7 +77,8 @@ impl Message {
         match &*method {
             "new_note" => parse_params!([(directory, to_string), (focus, to_bool)], method, args, || Message::NewNote { directory, focus }),
             "open_index" => parse_params!([], method, args, || Message::OpenIndex),
-            _ => Message::Error(format!("unknown method '{method}' with params {args:?}")),
+            "new_note_and_insert_link" => parse_params!([], method, args, || Message::NewNoteAndInsertLink),
+            _ => Message::Invalid(format!("unknown method '{method}' with params {args:?}")),
         }
     }
 }
@@ -81,6 +86,26 @@ impl Message {
 #[derive(Clone)]
 pub struct WikiPlugin {
     pub config: Config,
+}
+
+#[async_trait::async_trait]
+impl nvim_rs::Handler for WikiPlugin {
+    type Writer = Compat<tokio::fs::File>;
+
+    async fn handle_notify(&self, name: String, args: Vec<nvim_rs::Value>, mut nvim: Neovim<Compat<tokio::fs::File>>) {
+        let message = Message::parse(name, args);
+
+        let result = match message {
+            Message::NewNote { directory, focus } => self.new_note(&mut nvim, directory, focus).await.map(|_| ()),
+            Message::OpenIndex => self.open_index(&mut nvim).await,
+            Message::NewNoteAndInsertLink => self.new_note_and_insert_link(&mut nvim).await,
+            Message::Invalid(e) => Err(e.into()),
+        };
+
+        if let Err(e) = result {
+            connection::print_error(&mut nvim, e).await;
+        }
+    }
 }
 
 impl WikiPlugin {
@@ -124,23 +149,30 @@ impl WikiPlugin {
 
         Ok(())
     }
-}
 
-#[async_trait::async_trait]
-impl nvim_rs::Handler for WikiPlugin {
-    type Writer = Compat<tokio::fs::File>;
+    async fn new_note_and_insert_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
+        let new_note = self.new_note(nvim, "".to_string(), false).await?;
+        let new_note_path = new_note.get_name().await?;
+        self.insert_link_at_cursor(nvim, Path::new(&new_note_path), None).await?;
+        Ok(())
+    }
 
-    async fn handle_notify(&self, name: String, args: Vec<nvim_rs::Value>, mut nvim: Neovim<Compat<tokio::fs::File>>) {
-        let message = Message::parse(name, args);
-
-        let result = match message {
-            Message::NewNote { directory, focus } => self.new_note(&mut nvim, directory, focus).await.map(|_| ()),
-            Message::OpenIndex => self.open_index(&mut nvim).await,
-            Message::Error(e) => Err(e.into()),
+    async fn insert_link_at_cursor(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>, link_to: &Path, link_text: Option<String>) -> Result<(), Error> {
+        let link_text = match link_text {
+            Some(lt) => lt,
+            None => todo!("scan note for title"),
         };
 
-        if let Err(e) = result {
-            connection::print_error(&mut nvim, e).await;
-        }
+        let current_buf_name = nvim.get_current_buf().await?.get_name().await?;
+        let current_buf_path = Path::new(&current_buf_name);
+        let current_buf_parent_dir = current_buf_path.parent().ok_or_else(|| format!("could not get parent of current buffer because current buffer path is {current_buf_path:?}"))?;
+
+        let link_path = diff_paths(link_to, current_buf_parent_dir).ok_or_else(|| format!("could not construct link path to link from {current_buf_parent_dir:?} to {link_to:?}"))?;
+        let link_path = link_path.to_str().ok_or_else(|| format!("could not convert link path to str: {link_path:?}"))?;
+
+        nvim.put(vec![format!("[{link_text}]({link_path})")], "c", false, true).await?;
+
+        Ok(())
     }
 }
+
