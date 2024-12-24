@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use markdown_it::MarkdownIt;
-use nvim_rs::{compat::tokio::Compat, Neovim};
+use nvim_rs::{compat::tokio::Compat, Neovim, Value};
 use pathdiff::diff_paths;
 
 use crate::{connection, error::Error, plugin::note::Note};
@@ -34,12 +34,23 @@ pub enum Message {
     OpenIndex, // TODO: configurable index file name?
     DeleteNote,
     NewNoteAndInsertLink,
+    InsertLinkAtCursor { link_to_id: String, link_text: Option<String> },
+    InsertLinkAtCursorOrCreate { link_to_id: Option<String>, link_text: Option<String> },
     Invalid(String),
 }
 
 impl Message {
     #[inline]
     pub fn parse(method: String, args: Vec<nvim_rs::Value>) -> Message {
+        fn to_optional_string(method_name: &str, argument_name: &str, v: &nvim_rs::Value) -> Result<Option<String>, String> {
+            if v.is_nil() {
+                Ok(None)
+            } else if let Some(s) = v.as_str() {
+                Ok(Some(s.to_string()))
+            } else {
+                Err(format!("argument '{argument_name}' of method '{method_name}' is not a string or nil"))
+            }
+        }
         fn to_string(method_name: &str, argument_name: &str, v: &nvim_rs::Value) -> Result<String, String> {
             v.as_str().ok_or_else(move || format!("argument '{argument_name}' of method '{method_name}' is not a string")).map(|s| s.to_string())
         }
@@ -54,8 +65,8 @@ impl Message {
                     // (we cannot use a type annotation of [&'static str; _] because that is unstable: see rust issue #85077)
                     let num_params = ["asdf" as &'static str, $(stringify!($pname)),*].len() - 1;
                     if $params.len() == num_params {
-                        #[allow(unused_assignments, unused_variables, unused_mut, clippy::redundant_closure_call)]
 
+                        #[allow(unused_assignments, unused_variables, unused_mut, clippy::redundant_closure_call)]
                         let result = (|| {
                         let mut param_index = 0;
                             $(
@@ -82,6 +93,14 @@ impl Message {
             "open_index" => parse_params!([], method, args, || Message::OpenIndex),
             "new_note_and_insert_link" => parse_params!([], method, args, || Message::NewNoteAndInsertLink),
             "delete_note" => parse_params!([], method, args, || Message::DeleteNote),
+            "insert_link_at_cursor" => parse_params!([(link_to_id, to_string), (link_text, to_optional_string)], method, args, || {
+                Message::InsertLinkAtCursor { link_to_id, link_text }
+            }),
+            "insert_link_at_cursor_or_create" => {
+                parse_params!([(link_to_id, to_optional_string), (link_text, to_optional_string)], method, args, || {
+                    Message::InsertLinkAtCursorOrCreate { link_to_id, link_text }
+                })
+            }
             _ => Message::Invalid(format!("unknown method '{method}' with params {args:?}")),
         }
     }
@@ -100,9 +119,24 @@ impl nvim_rs::Handler for WikiPlugin {
         let message = Message::parse(name, args);
 
         let result = match message {
-            Message::NewNote { directory, focus } => self.new_note(&mut nvim, directory, focus).await.map(|_| ()),
+            Message::NewNote { directory, focus } => self.new_note(&mut nvim, &directory, focus).await.map(|_| ()),
             Message::OpenIndex => self.open_index(&mut nvim).await,
             Message::NewNoteAndInsertLink => self.new_note_and_insert_link(&mut nvim).await,
+            Message::InsertLinkAtCursor { link_to_id, link_text } => {
+                self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_id, None), link_text).await
+            }
+            Message::InsertLinkAtCursorOrCreate { link_to_id, link_text } => {
+                let n;
+                let note = match link_to_id {
+                    Some(link_to_id) => {
+                        n = Note::new(link_to_id, None);
+                        Some(&n)
+                    }
+                    None => None,
+                };
+
+                self.insert_link_at_cursor_or_create(&mut nvim, note, link_text).await
+            }
             Message::DeleteNote => self.delete_note(&mut nvim).await,
             Message::Invalid(e) => Err(e.into()),
         };
@@ -120,7 +154,7 @@ macro_rules! nvim_eval_and_cast {
     };
 }
 impl WikiPlugin {
-    async fn new_note(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>, directory: String, focus: bool) -> Result<Note, Error> {
+    async fn new_note(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>, directory: &str, focus: bool) -> Result<Note, Error> {
         nvim_eval_and_cast!(title, nvim, r#"input("note name: ")"#, as_str, "vim function input( should always return a string");
 
         let now = chrono::Local::now();
@@ -165,8 +199,22 @@ impl WikiPlugin {
     }
 
     async fn new_note_and_insert_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
-        let new_note = self.new_note(nvim, "".to_string(), false).await?;
+        let new_note = self.new_note(nvim, "", false).await?;
         self.insert_link_at_cursor(nvim, &new_note, None).await?;
+        Ok(())
+    }
+
+    async fn insert_link_at_cursor_or_create(
+        &self,
+        nvim: &mut Neovim<Compat<tokio::fs::File>>,
+        link_to: Option<&Note>,
+        link_text: Option<String>,
+    ) -> Result<(), Error> {
+        let note = match link_to {
+            Some(link_to) => link_to,
+            None => &self.new_note(nvim, "", false).await?,
+        };
+        self.insert_link_at_cursor(nvim, note, link_text).await?;
         Ok(())
     }
 
@@ -178,7 +226,8 @@ impl WikiPlugin {
     ) -> Result<(), Error> {
         let link_text = match link_text {
             Some(lt) => lt,
-            None => link_to.scan_title(&self.config).await?.unwrap_or(String::new()),
+            // TODO: None => link_to.scan_title(&self.config).await.unwrap_or(Some(String::new())).unwrap_or(String::new()),
+            None => "sample title".to_string(),
         };
 
         nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
