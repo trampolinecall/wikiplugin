@@ -48,30 +48,11 @@ local function check_job_running()
     end
 end
 
--- TODO: automate these functions?
-local function new_note(directory, focus)
-    check_job_running()
-    vim.fn.rpcnotify(job_id, "new_note", directory, focus)
-end
-local function open_index()
-    check_job_running()
-    vim.fn.rpcnotify(job_id, "open_index")
-end
-local function new_note_and_insert_link()
-    check_job_running()
-    vim.fn.rpcnotify(job_id, "new_note_and_insert_link")
-end
-local function insert_link_at_cursor(link_to_id, link_text)
-    check_job_running()
-    vim.fn.rpcnotify(job_id, "insert_link_at_cursor", link_to_id, link_text)
-end
-local function insert_link_at_cursor_or_create(link_to_id, link_text)
-    check_job_running()
-    vim.fn.rpcnotify(job_id, "insert_link_at_cursor_or_create", link_to_id, link_text)
-end
-local function delete_note()
-    check_job_running()
-    vim.fn.rpcnotify(job_id, "delete_note")
+local function notify(msg)
+    return function(...)
+        check_job_running()
+        vim.fn.rpcnotify(job_id, msg, ...)
+    end
 end
 
 local function insert_link_attach_mappings(prompt_bufnr, map)
@@ -88,7 +69,7 @@ local function insert_link_attach_mappings(prompt_bufnr, map)
             note_id = nil
         end
 
-        insert_link_at_cursor_or_create(note_id, nil)
+        notify("insert_link_at_cursor_or_create")(note_id, nil)
     end)
     return true
 end
@@ -173,12 +154,12 @@ end
 return {
     setup = setup,
 
-    new_note = new_note,
-    open_index = open_index,
-    new_note_and_insert_link = new_note_and_insert_link,
+    new_note = notify("new_note"),
+    open_index = notify("open_index"),
+    new_note_and_insert_link = notify("new_note_and_insert_link"),
     search_by_title = search_by_title,
     search_by_content = search_by_content,
     insert_link_by_title = insert_link_by_title,
     insert_link_by_content = insert_link_by_content,
-    delete_note = delete_note,
+    delete_note = notify("delete_note"),
 }

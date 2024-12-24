@@ -4,8 +4,13 @@ use markdown_it::MarkdownIt;
 use nvim_rs::{compat::tokio::Compat, Neovim, Value};
 use pathdiff::diff_paths;
 
-use crate::{connection, error::Error, plugin::note::Note};
+use crate::{
+    connection,
+    error::Error,
+    plugin::{messages::Message, note::Note},
+};
 
+mod messages;
 mod note;
 
 #[derive(Clone)]
@@ -29,83 +34,6 @@ impl Config {
     }
 }
 
-pub enum Message {
-    NewNote { directory: String, focus: bool },
-    OpenIndex, // TODO: configurable index file name?
-    DeleteNote,
-    NewNoteAndInsertLink,
-    InsertLinkAtCursor { link_to_id: String, link_text: Option<String> },
-    InsertLinkAtCursorOrCreate { link_to_id: Option<String>, link_text: Option<String> },
-    Invalid(String),
-}
-
-impl Message {
-    #[inline]
-    pub fn parse(method: String, args: Vec<nvim_rs::Value>) -> Message {
-        fn to_optional_string(method_name: &str, argument_name: &str, v: &nvim_rs::Value) -> Result<Option<String>, String> {
-            if v.is_nil() {
-                Ok(None)
-            } else if let Some(s) = v.as_str() {
-                Ok(Some(s.to_string()))
-            } else {
-                Err(format!("argument '{argument_name}' of method '{method_name}' is not a string or nil"))
-            }
-        }
-        fn to_string(method_name: &str, argument_name: &str, v: &nvim_rs::Value) -> Result<String, String> {
-            v.as_str().ok_or_else(move || format!("argument '{argument_name}' of method '{method_name}' is not a string")).map(|s| s.to_string())
-        }
-        fn to_bool(method_name: &str, argument_name: &str, v: &nvim_rs::Value) -> Result<bool, String> {
-            v.as_bool().ok_or_else(move || format!("argument '{argument_name}' of method '{method_name}' is not a bool"))
-        }
-
-        macro_rules! parse_params {
-            ([$(($pname:ident, $parse_function:expr)),*], $method_name:ident, $params:ident, || $result:expr) => {
-                {
-                    // we need the "asdf" so that if the method accepts no parameters, the array's type can be inferred to be an array of &'static str
-                    // (we cannot use a type annotation of [&'static str; _] because that is unstable: see rust issue #85077)
-                    let num_params = ["asdf" as &'static str, $(stringify!($pname)),*].len() - 1;
-                    if $params.len() == num_params {
-
-                        #[allow(unused_assignments, unused_variables, unused_mut, clippy::redundant_closure_call)]
-                        let result = (|| {
-                        let mut param_index = 0;
-                            $(
-                                let $pname = $parse_function(&$method_name, stringify!($pname), &$params[param_index])?;
-                                param_index += 1;
-                            )*
-
-                            Ok::<_, String>($result)
-                        })();
-
-                        match result {
-                            Ok(res) => res,
-                            Err(err) => Message::Invalid(err),
-                        }
-                    } else {
-                        Message::Invalid(format!("method '{}' needs {} parameters", $method_name, num_params))
-                    }
-                }
-            };
-        }
-
-        match &*method {
-            "new_note" => parse_params!([(directory, to_string), (focus, to_bool)], method, args, || Message::NewNote { directory, focus }),
-            "open_index" => parse_params!([], method, args, || Message::OpenIndex),
-            "new_note_and_insert_link" => parse_params!([], method, args, || Message::NewNoteAndInsertLink),
-            "delete_note" => parse_params!([], method, args, || Message::DeleteNote),
-            "insert_link_at_cursor" => parse_params!([(link_to_id, to_string), (link_text, to_optional_string)], method, args, || {
-                Message::InsertLinkAtCursor { link_to_id, link_text }
-            }),
-            "insert_link_at_cursor_or_create" => {
-                parse_params!([(link_to_id, to_optional_string), (link_text, to_optional_string)], method, args, || {
-                    Message::InsertLinkAtCursorOrCreate { link_to_id, link_text }
-                })
-            }
-            _ => Message::Invalid(format!("unknown method '{method}' with params {args:?}")),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct WikiPlugin {
     pub config: Config,
@@ -120,8 +48,8 @@ impl nvim_rs::Handler for WikiPlugin {
 
         let result = match message {
             Message::NewNote { directory, focus } => self.new_note(&mut nvim, &directory, focus).await.map(|_| ()),
-            Message::OpenIndex => self.open_index(&mut nvim).await,
-            Message::NewNoteAndInsertLink => self.new_note_and_insert_link(&mut nvim).await,
+            Message::OpenIndex {} => self.open_index(&mut nvim).await,
+            Message::NewNoteAndInsertLink {} => self.new_note_and_insert_link(&mut nvim).await,
             Message::InsertLinkAtCursor { link_to_id, link_text } => self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_id), link_text).await,
             Message::InsertLinkAtCursorOrCreate { link_to_id, link_text } => {
                 let n;
@@ -135,7 +63,7 @@ impl nvim_rs::Handler for WikiPlugin {
 
                 self.insert_link_at_cursor_or_create(&mut nvim, note, link_text).await
             }
-            Message::DeleteNote => self.delete_note(&mut nvim).await,
+            Message::DeleteNote {} => self.delete_note(&mut nvim).await,
             Message::Invalid(e) => Err(e.into()),
         };
 
