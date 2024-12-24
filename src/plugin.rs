@@ -52,18 +52,20 @@ impl nvim_rs::Handler for WikiPlugin {
         let message = Message::parse(name, args);
 
         let result = match message {
-            Message::NewNote { directory, focus } => self.new_note(&mut nvim, &directory, focus).await.map(|_| ()),
+            Message::NewNote { directory, focus } => self.new_note(&mut nvim, directory, focus).await.map(|_| ()),
             Message::OpenIndex {} => self.open_index(&mut nvim).await,
             Message::DeleteNote {} => self.delete_note(&mut nvim).await,
             Message::NewNoteAndInsertLink {} => self.new_note_and_insert_link(&mut nvim).await,
             Message::OpenTagIndex {} => self.open_tag_index(&mut nvim).await,
             Message::FollowLink {} => self.follow_link(&mut nvim).await,
-            Message::InsertLinkAtCursor { link_to_id, link_text } => self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_id), link_text).await,
-            Message::InsertLinkAtCursorOrCreate { link_to_id, link_text } => {
+            Message::InsertLinkAtCursor { link_to_directories, link_to_id, link_text } => {
+                self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_directories, link_to_id), link_text).await
+            }
+            Message::InsertLinkAtCursorOrCreate { link_to_directories, link_to_id, link_text } => {
                 let n;
                 let note = match link_to_id {
                     Some(link_to_id) => {
-                        n = Note::new(link_to_id);
+                        n = Note::new(link_to_directories, link_to_id);
                         Some(&n)
                     }
                     None => None,
@@ -87,14 +89,15 @@ macro_rules! nvim_eval_and_cast {
     };
 }
 impl WikiPlugin {
-    async fn new_note(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>, directory: &str, focus: bool) -> Result<Note, Error> {
+    async fn new_note(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>, directories: Vec<String>, focus: bool) -> Result<Note, Error> {
         nvim_eval_and_cast!(title, nvim, r#"input("note name: ")"#, as_str, "vim function input( should always return a string");
 
         let now = chrono::Local::now();
         let note_id = now.format(&self.config.note_id_timestamp_format).to_string();
 
         let buf_path = {
-            let mut p = self.config.home_path.join(directory);
+            let mut p = self.config.home_path.clone();
+            p.extend(&directories);
             p.push(&note_id);
             p.set_extension("md");
             p
@@ -120,7 +123,7 @@ impl WikiPlugin {
             nvim.set_current_buf(&buf).await?;
         }
 
-        Ok(Note::new(note_id))
+        Ok(Note::new(directories, note_id))
     }
 
     async fn open_index(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
@@ -132,7 +135,7 @@ impl WikiPlugin {
     }
 
     async fn new_note_and_insert_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
-        let new_note = self.new_note(nvim, "", false).await?;
+        let new_note = self.new_note(nvim, Vec::new(), false).await?;
         self.insert_link_at_cursor(nvim, &new_note, None).await?;
         Ok(())
     }
@@ -145,7 +148,7 @@ impl WikiPlugin {
     ) -> Result<(), Error> {
         let note = match link_to {
             Some(link_to) => link_to,
-            None => &self.new_note(nvim, "", false).await?,
+            None => &self.new_note(nvim, Vec::new(), false).await?,
         };
         self.insert_link_at_cursor(nvim, note, link_text).await?;
         Ok(())
@@ -184,7 +187,7 @@ impl WikiPlugin {
 
         for note in &notes {
             log::debug!("{}", note.id);
-            let title = note.scan_title(&self.config).await.unwrap_or("poop".to_string()); // TODO: this is not a real solution
+            let title = note.scan_title(&self.config).await?;
             let tags = note.scan_tags(&self.config).await.unwrap_or(Vec::new());
             let path = note.path(&self.config);
 
@@ -215,9 +218,22 @@ impl WikiPlugin {
     }
 
     async fn follow_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
-        nvim_eval_and_cast!(current_note_id, nvim, r#"expand("%:t:r")"#, as_str, "vim function expand( should always return a string");
+        nvim_eval_and_cast!(current_note_full_path, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
+        let path = Path::new(current_note_full_path);
 
-        let note = Note::new(current_note_id.to_string());
+        // TODO: move directories handling logic and things into parse filename so that it isnt duplicated
+        let note = Note {
+            directories: path
+                .strip_prefix(&self.config.home_path)?
+                .parent()
+                .ok_or("note path has no prefix")?
+                .into_iter()
+                .map(|p| p.to_str().map(ToString::to_string))
+                .collect::<Option<Vec<_>>>()
+                .ok_or("note directories are not all valid strings")?,
+            id: path.file_stem().ok_or("could not get file stem of current file")?.to_str().ok_or("os str is not valid str")?.to_string(),
+        };
+
         let md = note.parse_markdown(&self.config).await?;
 
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
@@ -271,9 +287,21 @@ impl WikiPlugin {
     fn list_all_notes(&self) -> Result<Vec<Note>, Error> {
         glob::glob(&format!("{}/**/*.md", self.config.home_path.to_str().ok_or("wiki home path should always be valid unicode")?))?
             .map(|path| match path {
-                Ok(path) => Ok(Note {
-                    id: path.as_path().file_stem().ok_or("glob returned invalid path")?.to_str().ok_or("os str is not valid str")?.to_string(),
-                }),
+                Ok(path) => {
+                    let path = path.as_path();
+                    // TODO: move directories handling logic and things into parse filename so that it isnt duplicated
+                    Ok(Note {
+                        directories: path
+                            .strip_prefix(&self.config.home_path)?
+                            .parent()
+                            .ok_or("note path has no prefix")?
+                            .into_iter()
+                            .map(|p| p.to_str().map(ToString::to_string))
+                            .collect::<Option<Vec<_>>>()
+                            .ok_or("note directories are not all valid strings")?,
+                        id: path.file_stem().ok_or("glob returned invalid path")?.to_str().ok_or("os str is not valid str")?.to_string(),
+                    })
+                }
                 Err(e) => Err(e)?,
             })
             .collect::<Result<Vec<_>, _>>()

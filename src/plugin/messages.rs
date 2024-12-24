@@ -10,6 +10,15 @@ trait FromNvimValue: Sized {
     fn type_description() -> String;
 }
 
+impl<T: FromNvimValue> FromNvimValue for Vec<T> {
+    fn convert(v: &nvim_rs::Value) -> Option<Self> {
+        v.as_array()?.into_iter().map(|v| T::convert(v)).collect::<Option<Vec<_>>>()
+    }
+
+    fn type_description() -> String {
+        format!("array of {}", T::type_description())
+    }
+}
 impl<T: FromNvimValue> FromNvimValue for Option<T> {
     fn convert(v: &nvim_rs::Value) -> Option<Self> {
         if v.is_nil() {
@@ -82,13 +91,13 @@ macro_rules! messages {
 
 messages! {
     pub enum Message {
-        NewNote, new_note, { directory: String, focus: bool },
+        NewNote, new_note, { directory: Vec<String>, focus: bool },
         OpenIndex, open_index, {}, // TODO: configurable index file name?
         DeleteNote, delete_note, {},
         NewNoteAndInsertLink, new_note_and_insert_link, {},
         OpenTagIndex, open_tag_index, {},
         FollowLink, follow_link, {},
-        InsertLinkAtCursor, insert_link_at_cursor, { link_to_id: String, link_text: Option<String> },
-        InsertLinkAtCursorOrCreate, insert_link_at_cursor_or_create, { link_to_id: Option<String>, link_text: Option<String> },
+        InsertLinkAtCursor, insert_link_at_cursor, { link_to_directories: Vec<String>, link_to_id: String, link_text: Option<String> },
+        InsertLinkAtCursorOrCreate, insert_link_at_cursor_or_create, { link_to_directories: Vec<String>, link_to_id: Option<String>, link_text: Option<String> },
     }
 }

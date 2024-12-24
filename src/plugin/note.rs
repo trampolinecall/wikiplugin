@@ -10,6 +10,7 @@ use yaml_rust::Yaml;
 use crate::{error::Error, plugin::Config};
 
 pub struct Note {
+    pub directories: Vec<String>,
     pub id: String,
 }
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
@@ -25,12 +26,16 @@ impl std::fmt::Display for MdParseError {
 impl std::error::Error for MdParseError {}
 
 impl Note {
-    pub fn new(id: String) -> Note {
-        Note { id }
+    pub fn new(directories: Vec<String>, id: String) -> Note {
+        Note { directories, id }
     }
 
     pub fn path(&self, config: &Config) -> PathBuf {
-        config.home_path.join(&self.id).with_extension("md")
+        let mut path = config.home_path.clone();
+        path.extend(&self.directories);
+        path.push(&self.id);
+        path.set_extension("md");
+        path
     }
 
     pub async fn read_contents(&self, config: &Config) -> Result<String, Error> {
