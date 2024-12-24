@@ -32,47 +32,52 @@ impl Note {
         tokio::fs::read_to_string(self.path(config)).await.map_err(Into::into)
     }
 
-    pub async fn scan_title(&self, config: &Config) -> Result<String, Error> {
-        let contents = self.read_contents(config).await?;
-        let mdast = to_mdast(&contents, &ParseOptions { constructs: Constructs { frontmatter: true, ..Constructs::gfm() }, ..ParseOptions::gfm() })
-            .map_err(MdParseError)?;
-        let frontmatter = markdown_recursive_find(&mdast, &mut |node| match node {
+    // TODO: sometimes this produces counterintuitive results (especially when being used to find
+    // the node under the cursor position) because it is always reading the markdown as it appears
+    // on the disk and not as it appears in the vim buffer (which might be modified and not written yet)
+    pub async fn parse_markdown(&self, config: &Config) -> Result<Node, Error> {
+        Ok(to_mdast(
+            &self.read_contents(config).await?,
+            &ParseOptions { constructs: Constructs { frontmatter: true, ..Constructs::gfm() }, ..ParseOptions::gfm() },
+        )
+        .map_err(MdParseError)?)
+    }
+
+    async fn find_frontmatter(&self, config: &Config) -> Result<String, Error> {
+        Ok(markdown_recursive_find_preorder(&self.parse_markdown(config).await?, &mut |node| match node {
             Node::Yaml(yaml) => Some(yaml.value.clone()),
             _ => None,
         })
         .ok_or("could not find frontmatter in file")?
-        .1;
+        .1)
+    }
 
-        let title = yaml_rust::YamlLoader::load_from_str(&frontmatter)?
-            .swap_remove(0) // TODO: swap_remove will panic if the yaml parser does not output any documents (i am not sure how that will happen though)
+    async fn parse_frontmatter(&self, config: &Config) -> Result<Yaml, Error> {
+        // TODO: swap_remove will panic if the yaml parser does not output any documents (i am not sure how that will happen though)
+        Ok(yaml_rust::YamlLoader::load_from_str(&self.find_frontmatter(config).await?)?.swap_remove(0))
+    }
+
+    pub async fn scan_title(&self, config: &Config) -> Result<String, Error> {
+        Ok(self
+            .parse_frontmatter(config)
+            .await?
             .into_hash()
             .ok_or("frontmatter is not hash table at the top level")?
             .remove(&Yaml::String("title".to_string()))
             .ok_or("frontmatter has no title field")?
             .into_string()
-            .ok_or("title is not string")?;
-
-        Ok(title)
+            .ok_or("title is not string")?)
     }
 
     pub async fn scan_tags(&self, config: &Config) -> Result<Vec<String>, Error> {
-        let contents = self.read_contents(config).await?;
-        let mdast = to_mdast(&contents, &ParseOptions { constructs: Constructs { frontmatter: true, ..Constructs::gfm() }, ..ParseOptions::gfm() })
-            .map_err(MdParseError)?;
-        let frontmatter = markdown_recursive_find(&mdast, &mut |node| match node {
-            Node::Yaml(yaml) => Some(yaml.value.clone()),
-            _ => None,
-        })
-        .ok_or("could not find frontmatter in file")?
-        .1;
-
-        let tags = yaml_rust::YamlLoader::load_from_str(&frontmatter)?
-            .swap_remove(0) // same TODO as above: swap_remove will panic if the yaml parser does not output any documents (i am not sure how that will happen though)
+        let s = self
+            .parse_frontmatter(config)
+            .await?
             .into_hash()
             .ok_or("frontmatter is not hash table at the top level")?
             .remove(&Yaml::String("tags".to_string()))
             .ok_or("frontmatter has no tags field")?;
-        match tags {
+        match s {
             Yaml::String(s) => Ok(s.split(" ").map(ToString::to_string).collect()),
             Yaml::Array(vec) => {
                 Ok(vec.into_iter().map(|tag| tag.into_string()).collect::<Option<Vec<_>>>().ok_or("tags field is not array of strings")?)
@@ -119,9 +124,14 @@ impl Note {
     }
 }
 
-fn markdown_recursive_find<'md, R>(node: &'md Node, pred: &mut impl FnMut(&Node) -> Option<R>) -> Option<(&'md Node, R)> {
-    match pred(node) {
-        Some(res) => Some((node, res)),
-        None => node.children().into_iter().flatten().find_map(|sn| markdown_recursive_find(sn, pred)),
-    }
+// TODO: find a better place for these functions
+pub fn markdown_recursive_find_preorder<'md, R>(node: &'md Node, pred: &mut impl FnMut(&Node) -> Option<R>) -> Option<(&'md Node, R)> {
+    pred(node).map(|r| (node, r)).or_else(|| node.children().into_iter().flatten().find_map(|sn| markdown_recursive_find_preorder(sn, pred)))
+}
+pub fn markdown_recursive_find_postorder<'md, R>(node: &'md Node, pred: &mut impl FnMut(&Node) -> Option<R>) -> Option<(&'md Node, R)> {
+    node.children().into_iter().flatten().find_map(|sn| markdown_recursive_find_postorder(sn, pred)).or_else(|| pred(node).map(|r| (node, r)))
+}
+
+pub fn point_in_position(position: &markdown::unist::Position, byte_index: usize) -> bool {
+    byte_index >= position.start.offset && byte_index < position.end.offset
 }

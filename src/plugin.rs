@@ -48,7 +48,9 @@ impl nvim_rs::Handler for WikiPlugin {
         let result = match message {
             Message::NewNote { directory, focus } => self.new_note(&mut nvim, &directory, focus).await.map(|_| ()),
             Message::OpenIndex {} => self.open_index(&mut nvim).await,
+            Message::DeleteNote {} => self.delete_note(&mut nvim).await,
             Message::NewNoteAndInsertLink {} => self.new_note_and_insert_link(&mut nvim).await,
+            Message::FollowLink {} => self.follow_link(&mut nvim).await,
             Message::InsertLinkAtCursor { link_to_id, link_text } => self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_id), link_text).await,
             Message::InsertLinkAtCursorOrCreate { link_to_id, link_text } => {
                 let n;
@@ -62,7 +64,6 @@ impl nvim_rs::Handler for WikiPlugin {
 
                 self.insert_link_at_cursor_or_create(&mut nvim, note, link_text).await
             }
-            Message::DeleteNote {} => self.delete_note(&mut nvim).await,
             Message::Invalid(e) => Err(e.into()),
         };
 
@@ -170,7 +171,38 @@ impl WikiPlugin {
     }
 
     async fn follow_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
-        todo!()
+        nvim_eval_and_cast!(current_note_id, nvim, r#"expand("%:t:r")"#, as_str, "vim function expand( should always return a string");
+
+        let note = Note::new(current_note_id.to_string());
+        let md = note.parse_markdown(&self.config).await?;
+
+        // TODO: more testing needs to be done to see if these byte indices are actually correct
+        nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
+        let (_, link_path) = note::markdown_recursive_find_preorder(&md, &mut |node| match node {
+            markdown::mdast::Node::Link(markdown::mdast::Link { children: _, position: Some(position), url, title: _ }) => {
+                log::debug!("{:?}, byte index is {}", position, cursor_byte_index);
+                if note::point_in_position(position, cursor_byte_index.try_into().expect("byte index u64 does not fit into usize")) {
+                    Some(url.to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .ok_or("not on a link")?;
+
+        let new_note_path = note.path(&self.config).parent().expect("note path has no parent").join(PathBuf::from(link_path));
+
+        nvim.cmd(
+            vec![
+                ("cmd".into(), "edit".into()),
+                ("args".into(), vec![nvim_rs::Value::from(new_note_path.to_str().expect("pathbuf cannot be converted to string"))].into()),
+            ],
+            vec![],
+        )
+        .await?;
+
+        Ok(())
     }
 
     async fn delete_note(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
