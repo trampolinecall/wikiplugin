@@ -56,6 +56,10 @@ local function new_note_and_insert_link()
     check_job_running()
     vim.fn.rpcnotify(job_id, "new_note_and_insert_link")
 end
+local function delete_note()
+    check_job_running()
+    vim.fn.rpcnotify(job_id, "delete_note")
+end
 
 return {
     setup = setup,
@@ -63,4 +67,5 @@ return {
     new_note = new_note,
     open_index = open_index,
     new_note_and_insert_link = new_note_and_insert_link,
+    delete_note = delete_note,
 }

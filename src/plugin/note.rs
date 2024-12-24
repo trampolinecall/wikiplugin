@@ -1,27 +1,46 @@
-use std::path::{Path, PathBuf};
+use std::{
+    cell::LazyCell,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
-use nvim_rs::{compat::tokio::Compat, Neovim};
+use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
 use crate::{error::Error, plugin::Config};
 
-struct Note {
-    id: String,
+pub struct Note {
+    pub id: String,
+    pub buffer: Option<Buffer<Compat<tokio::fs::File>>>,
 }
 
 impl Note {
-    fn new(id: String) -> Note {
-        Note { id }
+    pub fn new(id: String, buffer: Option<Buffer<Compat<tokio::fs::File>>>) -> Note {
+        Note { id, buffer }
     }
 
-    fn path(&self, config: &Config) -> PathBuf {
+    pub fn path(&self, config: &Config) -> PathBuf {
         config.home_path.join(&self.id).with_extension("md")
     }
 
-    async fn read_contents(&self, config: &Config) -> Result<String, Error> {
+    pub async fn read_contents(&self, config: &Config) -> Result<String, Error> {
         tokio::fs::read_to_string(self.path(config)).await.map_err(Into::into)
     }
 
-    async fn get_buffer_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
+    pub async fn scan_title(&self, config: &Config) -> Result<Option<String>, Error> {
+        let contents = self.read_contents(config).await?;
+        todo!()
+    }
+
+    pub async fn scan_tags(&self, config: &Config) -> Result<Vec<String>, Error> {
+        let contents = self.read_contents(config).await?;
+        todo!()
+    }
+
+    async fn get_buffer_in_nvim(
+        &self,
+        config: &Config,
+        nvim: &mut Neovim<Compat<tokio::fs::File>>,
+    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
         let buflist = nvim.list_bufs().await?;
         let mut current_buf = None;
         for buf in buflist {
@@ -54,4 +73,3 @@ impl Note {
         }
     }
 }
-
