@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use markdown_it::MarkdownIt;
-use nvim_rs::{compat::tokio::Compat, Neovim, Value};
+use nvim_rs::{compat::tokio::Compat, Neovim};
 use pathdiff::diff_paths;
 
 use crate::{
@@ -152,8 +151,7 @@ impl WikiPlugin {
     ) -> Result<(), Error> {
         let link_text = match link_text {
             Some(lt) => lt,
-            // TODO: None => link_to.scan_title(&self.config).await.unwrap_or(Some(String::new())).unwrap_or(String::new()),
-            None => "sample title".to_string(),
+            None => link_to.scan_title(&self.config).await.unwrap_or(String::new()),
         };
 
         nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
