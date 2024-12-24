@@ -187,8 +187,8 @@ impl WikiPlugin {
             "vim function input( should always return a string"
         );
         if choice == "yes" {
-            nvim.command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_str().expect("current buffer path should be utf8"))).await?;
             std::fs::remove_file(current_buf_path)?;
+            nvim.command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_str().expect("current buffer path should be utf8"))).await?;
         } else {
             nvim.command(r#"echo "\nnot deleting""#).await?;
         }
