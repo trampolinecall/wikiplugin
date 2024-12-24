@@ -10,12 +10,11 @@ use crate::{error::Error, plugin::Config};
 
 pub struct Note {
     pub id: String,
-    pub buffer: Option<Buffer<Compat<tokio::fs::File>>>,
 }
 
 impl Note {
-    pub fn new(id: String, buffer: Option<Buffer<Compat<tokio::fs::File>>>) -> Note {
-        Note { id, buffer }
+    pub fn new(id: String) -> Note {
+        Note { id }
     }
 
     pub fn path(&self, config: &Config) -> PathBuf {

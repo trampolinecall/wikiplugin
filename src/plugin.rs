@@ -122,14 +122,12 @@ impl nvim_rs::Handler for WikiPlugin {
             Message::NewNote { directory, focus } => self.new_note(&mut nvim, &directory, focus).await.map(|_| ()),
             Message::OpenIndex => self.open_index(&mut nvim).await,
             Message::NewNoteAndInsertLink => self.new_note_and_insert_link(&mut nvim).await,
-            Message::InsertLinkAtCursor { link_to_id, link_text } => {
-                self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_id, None), link_text).await
-            }
+            Message::InsertLinkAtCursor { link_to_id, link_text } => self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_id), link_text).await,
             Message::InsertLinkAtCursorOrCreate { link_to_id, link_text } => {
                 let n;
                 let note = match link_to_id {
                     Some(link_to_id) => {
-                        n = Note::new(link_to_id, None);
+                        n = Note::new(link_to_id);
                         Some(&n)
                     }
                     None => None,
@@ -187,7 +185,7 @@ impl WikiPlugin {
             nvim.set_current_buf(&buf).await?;
         }
 
-        Ok(Note::new(note_id, Some(buf)))
+        Ok(Note::new(note_id))
     }
 
     async fn open_index(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
