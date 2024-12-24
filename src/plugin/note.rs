@@ -79,6 +79,25 @@ impl Note {
             .ok_or("title is not string")?)
     }
 
+    pub async fn scan_timestamp(&self, config: &Config) -> Result<chrono::NaiveDateTime, Error> {
+        let mut frontmatter = self.parse_frontmatter(config).await?.into_hash().ok_or("frontmatter is not hash table at the top level")?;
+        let date = frontmatter
+            .remove(&Yaml::String("date".to_string()))
+            .ok_or("frontmatter has no date field")?
+            .as_str()
+            .ok_or("date field is not string")?
+            .to_string();
+        let time = frontmatter.remove(&Yaml::String("time".to_string()));
+
+        let date = chrono::NaiveDate::parse_from_str(&date, &config.date_format)?;
+        let time = match time {
+            Some(time) => chrono::NaiveTime::parse_from_str(time.as_str().ok_or("time field is not string")?, &config.time_format)?,
+            None => chrono::NaiveTime::MIN,
+        };
+
+        Ok(chrono::NaiveDateTime::new(date, time))
+    }
+
     pub async fn scan_tags(&self, config: &Config) -> Result<Vec<Tag>, Error> {
         let s = self
             .parse_frontmatter(config)

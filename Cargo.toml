@@ -13,5 +13,6 @@ log = "0.4.22"
 markdown = "=1.0.0-alpha.21"
 nvim-rs = { version = "0.7.0", features = ["use_tokio"] }
 pathdiff = "0.2.1"
+regex = "1.11.1"
 tokio = "1.38.1"
 yaml-rust = "0.4.5"
