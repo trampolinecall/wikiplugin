@@ -55,9 +55,10 @@ macro_rules! messages {
                 match &*message {
                     $(
                         stringify!($message_name_snake) => {
+                            #[allow(unused_mut, unused_variables)]
                             let mut arg_iter = args.iter().chain(std::iter::repeat(&nvim_rs::Value::Nil));
 
-                            #[allow(unused_assignments, unused_variables, unused_mut, clippy::redundant_closure_call)]
+                            #[allow(clippy::redundant_closure_call)]
                             let result = (|| {
                                 $(
                                     let $field_name = <$field_ty as FromNvimValue>::from(&message, stringify!($field_name), &arg_iter.next().expect("infinite iterator should always have next value"))?;
