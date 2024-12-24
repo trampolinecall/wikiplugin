@@ -176,6 +176,8 @@ return {
     new_note = new_note,
     open_index = open_index,
     new_note_and_insert_link = new_note_and_insert_link,
+    search_by_title = search_by_title,
+    search_by_content = search_by_content,
     insert_link_by_title = insert_link_by_title,
     insert_link_by_content = insert_link_by_content,
     delete_note = delete_note,
