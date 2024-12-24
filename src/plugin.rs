@@ -107,7 +107,7 @@ impl WikiPlugin {
         let buf = nvim.create_buf(true, false).await?;
         buf.set_name(buf_path.to_str().ok_or_else(|| format!("invalid buf path {buf_path:?}"))?).await?;
         buf.set_lines(0, 0, true, buf_contents).await?;
-        buf.set_option("filetype", "zet".into()).await?; // TODO: filetype not zet
+        buf.set_option("filetype", "wikipluginnote".into()).await?;
 
         if focus {
             nvim.set_current_buf(&buf).await?;
@@ -176,7 +176,6 @@ impl WikiPlugin {
         let note = Note::new(current_note_id.to_string());
         let md = note.parse_markdown(&self.config).await?;
 
-        // TODO: more testing needs to be done to see if these byte indices are actually correct
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
         let (_, link_path) = note::markdown_recursive_find_preorder(&md, &mut |node| match node {
             markdown::mdast::Node::Link(markdown::mdast::Link { children: _, position: Some(position), url, title: _ }) => {

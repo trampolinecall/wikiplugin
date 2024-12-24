@@ -36,10 +36,19 @@ local function setup(config_local)
     if job_id == 0 then
         error("failed to connect to the rpc endpoint with path '" .. bin_path "'")
         config = nil
+        return
     elseif job_id == -1 then
         error("binary '" .. bin_path .. "' is not executable")
         config = nil
+        return
     end
+
+    local augroup = vim.api.nvim_create_augroup("wikiplugin", {})
+    vim.api.nvim_create_autocmd({ "BufNewFile", "BufRead" }, {
+        group = augroup,
+        pattern = vim.fn.fnamemodify(config_local.home_path, ":p") .. "*.md", -- use :p to make sure that there is a / at the end because the autocommand wont work if the path has a double slash
+        command = "set filetype=wikipluginnote",
+    })
 end
 
 local function check_job_running()
