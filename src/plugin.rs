@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
 
 use nvim_rs::{compat::tokio::Compat, Neovim};
 use pathdiff::diff_paths;
@@ -6,7 +9,10 @@ use pathdiff::diff_paths;
 use crate::{
     connection,
     error::Error,
-    plugin::{messages::Message, note::Note},
+    plugin::{
+        messages::Message,
+        note::{Note, Tag},
+    },
 };
 
 mod messages;
@@ -50,6 +56,7 @@ impl nvim_rs::Handler for WikiPlugin {
             Message::OpenIndex {} => self.open_index(&mut nvim).await,
             Message::DeleteNote {} => self.delete_note(&mut nvim).await,
             Message::NewNoteAndInsertLink {} => self.new_note_and_insert_link(&mut nvim).await,
+            Message::OpenTagIndex {} => self.open_tag_index(&mut nvim).await,
             Message::FollowLink {} => self.follow_link(&mut nvim).await,
             Message::InsertLinkAtCursor { link_to_id, link_text } => self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_id), link_text).await,
             Message::InsertLinkAtCursorOrCreate { link_to_id, link_text } => {
@@ -74,9 +81,9 @@ impl nvim_rs::Handler for WikiPlugin {
 }
 
 macro_rules! nvim_eval_and_cast {
-    ($vname:ident, $nvim:expr, $eval:expr, $cast:ident, $expect_message:expr) => {
+    ($vname:ident, $nvim:expr, $eval:expr, $cast:ident, $error_message:expr) => {
         let $vname = $nvim.eval($eval).await?;
-        let $vname = $vname.$cast().expect($expect_message);
+        let $vname = $vname.$cast().ok_or($error_message)?;
     };
 }
 impl WikiPlugin {
@@ -170,6 +177,43 @@ impl WikiPlugin {
         Ok(())
     }
 
+    async fn open_tag_index(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
+        let notes = self.list_all_notes()?;
+        let mut tag_table: BTreeMap<Tag, Vec<(&Note, String, PathBuf)>> = BTreeMap::new(); // TODO: eventually this should become &(Note, String, PathBuf)
+        let mut tag_list = BTreeSet::new();
+
+        for note in &notes {
+            log::debug!("{}", note.id);
+            let title = note.scan_title(&self.config).await.unwrap_or("poop".to_string()); // TODO: this is not a real solution
+            let tags = note.scan_tags(&self.config).await.unwrap_or(Vec::new());
+            let path = note.path(&self.config);
+
+            for tag in tags {
+                tag_table.entry(tag.clone()).or_default().push((note, title.clone(), path.clone()));
+                tag_list.insert(tag);
+            }
+        }
+
+        let buffer = nvim.create_buf(true, true).await?;
+        buffer.set_option("filetype", "wikipluginnote".into()).await?;
+
+        for tag in tag_list {
+            buffer.set_lines(-2, -2, false, vec![format!("# {}", tag), "".to_string()]).await?;
+
+            for (_, note_title, note_path) in &tag_table[&tag] {
+                buffer
+                    .set_lines(-2, -2, false, vec![format!("- [{}]({})", note_title, note_path.to_str().ok_or("PathBuf contains invalid unicode")?)])
+                    .await?;
+            }
+
+            buffer.set_lines(-2, -2, false, vec!["".to_string()]).await?;
+        }
+
+        nvim.set_current_buf(&buffer).await?;
+
+        Ok(())
+    }
+
     async fn follow_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
         nvim_eval_and_cast!(current_note_id, nvim, r#"expand("%:t:r")"#, as_str, "vim function expand( should always return a string");
 
@@ -190,12 +234,12 @@ impl WikiPlugin {
         })
         .ok_or("not on a link")?;
 
-        let new_note_path = note.path(&self.config).parent().expect("note path has no parent").join(PathBuf::from(link_path));
+        let new_note_path = note.path(&self.config).parent().ok_or("note path has no parent")?.join(PathBuf::from(link_path));
 
         nvim.cmd(
             vec![
                 ("cmd".into(), "edit".into()),
-                ("args".into(), vec![nvim_rs::Value::from(new_note_path.to_str().expect("pathbuf cannot be converted to string"))].into()),
+                ("args".into(), vec![nvim_rs::Value::from(new_note_path.to_str().ok_or("pathbuf cannot be converted to string")?)].into()),
             ],
             vec![],
         )
@@ -217,22 +261,21 @@ impl WikiPlugin {
         );
         if choice == "yes" {
             std::fs::remove_file(current_buf_path)?;
-            nvim.command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_str().expect("current buffer path should be utf8"))).await?;
+            nvim.command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_str().ok_or("current buffer path should be utf8")?)).await?;
         } else {
             nvim.command(r#"echo "\nnot deleting""#).await?;
         }
         Ok(())
     }
 
-    async fn list_all_files(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Vec<String>, Error> {
-        nvim_eval_and_cast!(
-            things,
-            nvim,
-            &format!("glob({}/**/*.md)", self.config.home_path.to_str().expect("wiki home path should always be valid unicode")),
-            as_array,
-            "vim fn glob( should return an array"
-        );
-        let paths: Vec<_> = things.iter().map(|path| path.as_str().expect("vim fn glob( array elements should be strings").to_string()).collect();
-        Ok(paths)
+    fn list_all_notes(&self) -> Result<Vec<Note>, Error> {
+        glob::glob(&format!("{}/**/*.md", self.config.home_path.to_str().ok_or("wiki home path should always be valid unicode")?))?
+            .map(|path| match path {
+                Ok(path) => Ok(Note {
+                    id: path.as_path().file_stem().ok_or("glob returned invalid path")?.to_str().ok_or("os str is not valid str")?.to_string(),
+                }),
+                Err(e) => Err(e)?,
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 }

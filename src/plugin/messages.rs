@@ -86,6 +86,7 @@ messages! {
         OpenIndex, open_index, {}, // TODO: configurable index file name?
         DeleteNote, delete_note, {},
         NewNoteAndInsertLink, new_note_and_insert_link, {},
+        OpenTagIndex, open_tag_index, {},
         FollowLink, follow_link, {},
         InsertLinkAtCursor, insert_link_at_cursor, { link_to_id: String, link_text: Option<String> },
         InsertLinkAtCursorOrCreate, insert_link_at_cursor_or_create, { link_to_id: Option<String>, link_text: Option<String> },

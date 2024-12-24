@@ -167,6 +167,7 @@ return {
     open_index = notify("open_index"),
     new_note_and_insert_link = notify("new_note_and_insert_link"),
     delete_note = notify("delete_note"),
+    open_tag_index = notify("open_tag_index"),
     follow_link = notify("follow_link"),
     search_by_title = search_by_title,
     search_by_content = search_by_content,

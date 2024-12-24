@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+};
 
 use markdown::{mdast::Node, to_mdast, Constructs, ParseOptions};
 use nvim_rs::{compat::tokio::Compat, Neovim};
@@ -9,6 +12,8 @@ use crate::{error::Error, plugin::Config};
 pub struct Note {
     pub id: String,
 }
+#[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
+pub struct Tag(Vec<String>);
 
 #[derive(Debug)]
 struct MdParseError(markdown::message::Message);
@@ -69,7 +74,7 @@ impl Note {
             .ok_or("title is not string")?)
     }
 
-    pub async fn scan_tags(&self, config: &Config) -> Result<Vec<String>, Error> {
+    pub async fn scan_tags(&self, config: &Config) -> Result<Vec<Tag>, Error> {
         let s = self
             .parse_frontmatter(config)
             .await?
@@ -78,11 +83,13 @@ impl Note {
             .remove(&Yaml::String("tags".to_string()))
             .ok_or("frontmatter has no tags field")?;
         match s {
-            Yaml::String(s) => Ok(s.split(" ").map(ToString::to_string).collect()),
-            Yaml::Array(vec) => {
-                Ok(vec.into_iter().map(|tag| tag.into_string()).collect::<Option<Vec<_>>>().ok_or("tags field is not array of strings")?)
-            }
-            _ => Err("tags field is not string or array".into()),
+            Yaml::String(s) => Ok(s.split(" ").map(Tag::parse_from_str).collect()),
+            Yaml::Array(vec) => Ok(vec
+                .into_iter()
+                .map(|tag| Some(Tag::parse_from_str(tag.as_str()?)))
+                .collect::<Option<Vec<_>>>()
+                .ok_or("tags field is not array of strings")?),
+            _ => Err(format!("tags field of note {} is not string or array", self.id).into()),
         }
     }
 
@@ -121,6 +128,17 @@ impl Note {
             }
             None => Ok(None),
         }
+    }
+}
+
+impl Tag {
+    fn parse_from_str(s: &str) -> Tag {
+        Tag(s.split("::").map(ToString::to_string).collect())
+    }
+}
+impl Display for Tag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.join("::"))
     }
 }
 
