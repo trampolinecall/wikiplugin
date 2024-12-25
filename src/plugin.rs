@@ -257,7 +257,7 @@ impl WikiPlugin {
     async fn follow_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
         nvim_eval_and_cast!(current_note_full_path, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
         let path = Path::new(current_note_full_path);
-        let note = Note::parse_from_filepath(&self.config, path)?;
+        let note = Note::parse_from_filepath(&self.config, path)?; // TODO: because scratch buffers do not have paths, this does not work when you are in a scratch buffer
         let md = note.parse_markdown(&self.config).await?;
 
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
