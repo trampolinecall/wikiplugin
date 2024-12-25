@@ -167,18 +167,7 @@ impl WikiPlugin {
         let note = match link_to {
             Some(link_to_path) => {
                 let path = Path::new(&link_to_path);
-                // TODO: move directories handling logic and things into parse filename so that it isnt duplicated
-                n = Note {
-                    directories: path
-                        .strip_prefix(&self.config.home_path)?
-                        .parent()
-                        .ok_or("note path has no prefix")?
-                        .iter()
-                        .map(|p| p.to_str().map(ToString::to_string))
-                        .collect::<Option<Vec<_>>>()
-                        .ok_or("note directories are not all valid strings")?,
-                    id: path.file_stem().ok_or("could not get file stem of current file")?.to_str().ok_or("os str is not valid str")?.to_string(),
-                };
+                n = Note::parse_from_filepath(&self.config, path)?;
                 Some(&n)
             }
             None => None,
@@ -268,20 +257,7 @@ impl WikiPlugin {
     async fn follow_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
         nvim_eval_and_cast!(current_note_full_path, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
         let path = Path::new(current_note_full_path);
-
-        // TODO: move directories handling logic and things into parse filename so that it isnt duplicated
-        let note = Note {
-            directories: path
-                .strip_prefix(&self.config.home_path)?
-                .parent()
-                .ok_or("note path has no prefix")?
-                .iter()
-                .map(|p| p.to_str().map(ToString::to_string))
-                .collect::<Option<Vec<_>>>()
-                .ok_or("note directories are not all valid strings")?,
-            id: path.file_stem().ok_or("could not get file stem of current file")?.to_str().ok_or("os str is not valid str")?.to_string(),
-        };
-
+        let note = Note::parse_from_filepath(&self.config, path)?;
         let md = note.parse_markdown(&self.config).await?;
 
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
@@ -495,18 +471,7 @@ impl WikiPlugin {
             .map(|path| match path {
                 Ok(path) => {
                     let path = path.as_path();
-                    // TODO: move directories handling logic and things into parse filename so that it isnt duplicated
-                    Ok(Note {
-                        directories: path
-                            .strip_prefix(&self.config.home_path)?
-                            .parent()
-                            .ok_or("note path has no prefix")?
-                            .iter()
-                            .map(|p| p.to_str().map(ToString::to_string))
-                            .collect::<Option<Vec<_>>>()
-                            .ok_or("note directories are not all valid strings")?,
-                        id: path.file_stem().ok_or("glob returned invalid path")?.to_str().ok_or("os str is not valid str")?.to_string(),
-                    })
+                    Note::parse_from_filepath(&self.config, path)
                 }
                 Err(e) => Err(e)?,
             })

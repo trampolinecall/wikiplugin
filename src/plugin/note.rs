@@ -9,6 +9,7 @@ use yaml_rust::Yaml;
 
 use crate::{error::Error, plugin::Config};
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Note {
     pub directories: Vec<String>,
     pub id: String,
@@ -28,6 +29,27 @@ impl std::error::Error for MdParseError {}
 impl Note {
     pub fn new(directories: Vec<String>, id: String) -> Note {
         Note { directories, id }
+    }
+
+    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<Note, Error> {
+        let directories_path = if path.starts_with(&config.home_path) {
+            path.strip_prefix(&config.home_path).expect("strip_prefix should return Ok if starts_with returns true")
+        } else if !path.is_absolute() {
+            path
+        } else {
+            Err("absolute path that does not point to a file within the wiki home directory is not a note")?
+        };
+
+        Ok(Note {
+            directories: directories_path
+                .parent()
+                .ok_or("note path has no parent")?
+                .iter()
+                .map(|p| p.to_str().map(ToString::to_string))
+                .collect::<Option<Vec<_>>>()
+                .ok_or("note directories are not all valid strings")?,
+            id: path.file_stem().ok_or("could not get file stem of note path")?.to_str().ok_or("os str is not valid str")?.to_string(),
+        })
     }
 
     pub fn path(&self, config: &Config) -> PathBuf {
@@ -176,4 +198,48 @@ pub fn markdown_recursive_find_postorder<'md, R>(node: &'md Node, pred: &mut imp
 
 pub fn point_in_position(position: &markdown::unist::Position, byte_index: usize) -> bool {
     byte_index >= position.start.offset && byte_index < position.end.offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_from_filepath_relative_test() {
+        let config = Config {
+            home_path: PathBuf::from("/path/to/wiki"),
+            note_id_timestamp_format: String::new(),
+            date_format: String::new(),
+            time_format: String::new(),
+        };
+
+        let note_parsed = Note::parse_from_filepath(&config, Path::new("dir1/dir2/note.md")).expect("parse from filepath should work");
+        assert_eq!(note_parsed, Note { directories: vec!["dir1".to_string(), "dir2".to_string()], id: "note".to_string() });
+    }
+
+    #[test]
+    fn parse_from_filepath_absolute_in_home_test() {
+        let config = Config {
+            home_path: PathBuf::from("/path/to/wiki"),
+            note_id_timestamp_format: String::new(),
+            date_format: String::new(),
+            time_format: String::new(),
+        };
+
+        let note_parsed = Note::parse_from_filepath(&config, Path::new("/path/to/wiki/dir1/dir2/note.md")).expect("parse from filepath should work");
+        assert_eq!(note_parsed, Note { directories: vec!["dir1".to_string(), "dir2".to_string()], id: "note".to_string() });
+    }
+
+    #[test]
+    fn parse_from_filepath_absolute_out_of_home_test() {
+        let config = Config {
+            home_path: PathBuf::from("/path/to/wiki"),
+            note_id_timestamp_format: String::new(),
+            date_format: String::new(),
+            time_format: String::new(),
+        };
+
+        let note_parse_error = Note::parse_from_filepath(&config, Path::new("/some/other/directory/note.md"))
+            .expect_err("parse from filepath should not work in this case");
+    }
 }
