@@ -31,6 +31,18 @@ impl Note {
         Note::Physical { directories, id }
     }
 
+    pub async fn get_current_note(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Note, Error> {
+        let current_buf = nvim.get_current_buf().await?;
+        let is_scratch = current_buf.get_option("scratch").await?.as_bool().expect("option scratch should be a bool");
+        if is_scratch {
+            Ok(Note::Scratch { buffer: current_buf })
+        } else {
+            nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
+            let path = Path::new(current_buf_path_str);
+            Note::parse_from_filepath(config, path)
+        }
+    }
+
     // TODO: hide this function? replace it with get_current_buf_note?
     pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<Note, Error> {
         let directories_path = if path.starts_with(&config.home_path) {
