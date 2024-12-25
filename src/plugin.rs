@@ -24,6 +24,7 @@ macro_rules! nvim_eval_and_cast {
 }
 
 mod links;
+mod markdown;
 mod messages;
 mod note;
 
@@ -207,7 +208,7 @@ impl WikiPlugin {
 
         let link_text = match link_text {
             Some(lt) => lt,
-            None => link_to.scan_title(&self.config, nvim).await.unwrap_or(String::new()),
+            None => markdown::get_title(&markdown::parse_frontmatter(&link_to.parse_markdown(&self.config, nvim).await?)?).unwrap_or_default(),
         };
 
         let current_note = Note::get_current_note(&self.config, nvim).await?;
@@ -229,8 +230,9 @@ impl WikiPlugin {
         for note in &notes {
             assert!(note.is_physical(), "list_all_physical_notes should only return physical notes");
 
-            let title = note.scan_title(&self.config, nvim).await?;
-            let tags = note.scan_tags(&self.config, nvim).await.unwrap_or(Vec::new());
+            let frontmatter = markdown::parse_frontmatter(&note.parse_markdown(&self.config, nvim).await?)?;
+            let title = markdown::get_title(&frontmatter)?;
+            let tags = markdown::get_tags(&frontmatter).unwrap_or_default();
             let path = note.path(&self.config).expect("physical note should have a path");
 
             for tag in tags {
@@ -264,9 +266,9 @@ impl WikiPlugin {
         let current_md = current_note.parse_markdown(&self.config, nvim).await?;
 
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
-        let (_, link_path) = note::markdown_recursive_find_preorder(&current_md, &mut |node| match node {
-            markdown::mdast::Node::Link(markdown::mdast::Link { children: _, position: Some(position), url, title: _ }) => {
-                if note::point_in_position(position, cursor_byte_index.try_into().expect("byte index u64 does not fit into usize")) {
+        let (_, link_path) = markdown::rec_find_preorder(&current_md, &mut |node| match node {
+            ::markdown::mdast::Node::Link(::markdown::mdast::Link { children: _, position: Some(position), url, title: _ }) => {
+                if markdown::point_in_position(position, cursor_byte_index.try_into().expect("byte index u64 does not fit into usize")) {
                     Some(url.to_string())
                 } else {
                     None
@@ -386,9 +388,11 @@ impl WikiPlugin {
                         match file {
                             Note::Physical { ref directories, id: _ } => {
                                 if *directories == directory {
+                                    let md = file.parse_markdown(&self.config, nvim).await?;
+                                    let frontmatter = markdown::parse_frontmatter(&md)?;
                                     // TODO: having to do all of this is pretty messy but it is needed because the comparator cannot be async
-                                    let title = file.scan_title(&self.config, nvim).await.ok();
-                                    let timestamp = file.scan_timestamp(&self.config, nvim).await?;
+                                    let title = markdown::get_title(&frontmatter).ok();
+                                    let timestamp = markdown::get_timestamp(&frontmatter, &self.config)?;
                                     files.push((file, title, timestamp))
                                 }
                             }
