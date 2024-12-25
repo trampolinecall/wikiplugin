@@ -207,7 +207,7 @@ impl WikiPlugin {
 
         let link_text = match link_text {
             Some(lt) => lt,
-            None => link_to.scan_title(&self.config).await.unwrap_or(String::new()),
+            None => link_to.scan_title(&self.config, nvim).await.unwrap_or(String::new()),
         };
 
         let current_note = Note::get_current_note(&self.config, nvim).await?;
@@ -229,8 +229,8 @@ impl WikiPlugin {
         for note in &notes {
             assert!(note.is_physical(), "list_all_physical_notes should only return physical notes");
 
-            let title = note.scan_title(&self.config).await?;
-            let tags = note.scan_tags(&self.config).await.unwrap_or(Vec::new());
+            let title = note.scan_title(&self.config, nvim).await?;
+            let tags = note.scan_tags(&self.config, nvim).await.unwrap_or(Vec::new());
             let path = note.path(&self.config).expect("physical note should have a path");
 
             for tag in tags {
@@ -263,7 +263,7 @@ impl WikiPlugin {
         nvim_eval_and_cast!(current_note_full_path, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
         let current_path = Path::new(current_note_full_path);
         let current_note = Note::parse_from_filepath(&self.config, current_path)?; // TODO: because scratch buffers do not have paths, this does not work when you are in a scratch buffer
-        let current_md = current_note.parse_markdown(&self.config).await?;
+        let current_md = current_note.parse_markdown(&self.config, nvim).await?;
 
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
         let (_, link_path) = note::markdown_recursive_find_preorder(&current_md, &mut |node| match node {
@@ -389,8 +389,8 @@ impl WikiPlugin {
                             Note::Physical { ref directories, id: _ } => {
                                 if *directories == directory {
                                     // TODO: having to do all of this is pretty messy but it is needed because the comparator cannot be async
-                                    let title = file.scan_title(&self.config).await.ok();
-                                    let timestamp = file.scan_timestamp(&self.config).await?;
+                                    let title = file.scan_title(&self.config, nvim).await.ok();
+                                    let timestamp = file.scan_timestamp(&self.config, nvim).await?;
                                     files.push((file, title, timestamp))
                                 }
                             }

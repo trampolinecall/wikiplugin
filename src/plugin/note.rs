@@ -11,7 +11,7 @@ use crate::{error::Error, plugin::Config};
 
 #[derive(PartialEq, Eq)]
 pub enum Note {
-    Physical { directories: Vec<String>, id: String }, // TODO: prefer contents read from buffer if this is modified in a buffer
+    Physical { directories: Vec<String>, id: String },
     Scratch { buffer: Buffer<Compat<tokio::fs::File>> },
 }
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
@@ -33,7 +33,7 @@ impl Note {
 
     pub async fn get_current_note(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Note, Error> {
         let current_buf = nvim.get_current_buf().await?;
-        let is_scratch = current_buf.get_option("scratch").await?.as_bool().expect("option scratch should be a bool");
+        let is_scratch = current_buf.get_option("buftype").await?.as_str().expect("option buftype should be a bool") == "nofile";
         if is_scratch {
             Ok(Note::Scratch { buffer: current_buf })
         } else {
@@ -78,29 +78,29 @@ impl Note {
         }
     }
 
-    // TODO: prefer contents from nvim buffer if this exists in an nvim buffer
-    pub async fn read_contents(&self, config: &Config) -> Result<String, Error> {
+    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
         match self {
             Note::Physical { directories: _, id: _ } => {
-                Ok(tokio::fs::read_to_string(self.path(config).expect("physical note always has path")).await?)
+                if let Some(buffer_contents) = self.read_contents_in_nvim(config, nvim).await? {
+                    Ok(buffer_contents)
+                } else {
+                    Ok(tokio::fs::read_to_string(self.path(config).expect("physical note always has path")).await?)
+                }
             }
             Note::Scratch { buffer } => Ok(buffer.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect()),
         }
     }
 
-    // TODO: sometimes this produces counterintuitive results (especially when being used to find
-    // the node under the cursor position) because it is always reading the markdown as it appears
-    // on the disk and not as it appears in the vim buffer (which might be modified and not written yet)
-    pub async fn parse_markdown(&self, config: &Config) -> Result<Node, Error> {
+    pub async fn parse_markdown(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Node, Error> {
         Ok(to_mdast(
-            &self.read_contents(config).await?,
+            &self.read_contents(config, nvim).await?,
             &ParseOptions { constructs: Constructs { frontmatter: true, ..Constructs::gfm() }, ..ParseOptions::gfm() },
         )
         .map_err(MdParseError)?)
     }
 
-    async fn find_frontmatter(&self, config: &Config) -> Result<String, Error> {
-        Ok(markdown_recursive_find_preorder(&self.parse_markdown(config).await?, &mut |node| match node {
+    async fn find_frontmatter(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
+        Ok(markdown_recursive_find_preorder(&self.parse_markdown(config, nvim).await?, &mut |node| match node {
             Node::Yaml(yaml) => Some(yaml.value.clone()),
             _ => None,
         })
@@ -108,14 +108,14 @@ impl Note {
         .1)
     }
 
-    async fn parse_frontmatter(&self, config: &Config) -> Result<Yaml, Error> {
+    async fn parse_frontmatter(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Yaml, Error> {
         // TODO: swap_remove will panic if the yaml parser does not output any documents (i am not sure how that will happen though)
-        Ok(yaml_rust::YamlLoader::load_from_str(&self.find_frontmatter(config).await?)?.swap_remove(0))
+        Ok(yaml_rust::YamlLoader::load_from_str(&self.find_frontmatter(config, nvim).await?)?.swap_remove(0))
     }
 
-    pub async fn scan_title(&self, config: &Config) -> Result<String, Error> {
+    pub async fn scan_title(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
         Ok(self
-            .parse_frontmatter(config)
+            .parse_frontmatter(config, nvim)
             .await?
             .into_hash()
             .ok_or("frontmatter is not hash table at the top level")?
@@ -125,8 +125,8 @@ impl Note {
             .ok_or("title is not string")?)
     }
 
-    pub async fn scan_timestamp(&self, config: &Config) -> Result<chrono::NaiveDateTime, Error> {
-        let mut frontmatter = self.parse_frontmatter(config).await?.into_hash().ok_or("frontmatter is not hash table at the top level")?;
+    pub async fn scan_timestamp(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<chrono::NaiveDateTime, Error> {
+        let mut frontmatter = self.parse_frontmatter(config, nvim).await?.into_hash().ok_or("frontmatter is not hash table at the top level")?;
         let date = frontmatter
             .remove(&Yaml::String("date".to_string()))
             .ok_or("frontmatter has no date field")?
@@ -144,9 +144,9 @@ impl Note {
         Ok(chrono::NaiveDateTime::new(date, time))
     }
 
-    pub async fn scan_tags(&self, config: &Config) -> Result<Vec<Tag>, Error> {
+    pub async fn scan_tags(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Vec<Tag>, Error> {
         let s = self
-            .parse_frontmatter(config)
+            .parse_frontmatter(config, nvim)
             .await?
             .into_hash()
             .ok_or("frontmatter is not hash table at the top level")?
@@ -163,45 +163,51 @@ impl Note {
         }
     }
 
-    // TODO: do these functions
-    /*
     async fn get_buffer_in_nvim(
         &self,
         config: &Config,
         nvim: &mut Neovim<Compat<tokio::fs::File>>,
     ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
-        let buflist = nvim.list_bufs().await?;
-        let mut current_buf = None;
-        for buf in buflist {
-            let buf_name = &buf.get_name().await?;
-            let buf_path = Path::new(buf_name);
-            if buf_path == self.path(config) {
-                current_buf = Some(buf);
-                break;
-            }
-        }
+        match self {
+            Note::Physical { directories: _, id: _ } => {
+                let buflist = nvim.list_bufs().await?;
+                let mut current_buf = None;
+                for buf in buflist {
+                    let buf_number = &buf.get_number().await?;
+                    nvim_eval_and_cast!(
+                        buf_path,
+                        nvim,
+                        &format!(r##"expand("#{}:p")"##, buf_number),
+                        as_str,
+                        "vim function expand( should always return a number"
+                    );
+                    let buf_path = Path::new(buf_path);
+                    if buf_path == self.path(config).expect("physical note should always have path") {
+                        current_buf = Some(buf);
+                        break;
+                    }
+                }
 
-        match current_buf {
-            Some(b) => {
-                if b.is_loaded().await? {
-                    Ok(Some(b))
-                } else {
-                    Ok(None)
+                match current_buf {
+                    Some(b) => {
+                        if b.is_loaded().await? {
+                            Ok(Some(b))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                    None => Ok(None),
                 }
             }
-            None => Ok(None),
+            Note::Scratch { buffer } => Ok(Some(buffer.clone())),
         }
     }
-    async fn get_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
+    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
         match self.get_buffer_in_nvim(config, nvim).await? {
-            Some(buf) => {
-                let lines = buf.get_lines(0, -1, false).await?;
-                Ok(Some(lines.join("\n")))
-            }
+            Some(buf) => Ok(Some(buf.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect())),
             None => Ok(None),
         }
     }
-    */
 
     /// Returns `true` if the note is [`Physical`].
     ///
