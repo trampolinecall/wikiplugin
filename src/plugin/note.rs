@@ -31,6 +31,7 @@ impl Note {
         Note { directories, id }
     }
 
+    // TODO: hide this function? replace it with get_current_buf_note?
     pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<Note, Error> {
         let directories_path = if path.starts_with(&config.home_path) {
             path.strip_prefix(&config.home_path).expect("strip_prefix should return Ok if starts_with returns true")

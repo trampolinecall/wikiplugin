@@ -4,7 +4,6 @@ use std::{
 };
 
 use nvim_rs::{compat::tokio::Compat, Neovim};
-use pathdiff::diff_paths;
 use regex::Regex;
 
 use crate::{
@@ -16,6 +15,7 @@ use crate::{
     },
 };
 
+mod links;
 mod messages;
 mod note;
 
@@ -205,15 +205,8 @@ impl WikiPlugin {
 
         nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
         let current_buf_path = Path::new(current_buf_path_str);
-        let current_buf_parent_dir = current_buf_path
-            .parent()
-            .ok_or_else(|| format!("could not get parent of current buffer because current buffer path is {current_buf_path:?}"))?;
-
-        let link_path = diff_paths(link_to.path(&self.config), current_buf_parent_dir)
-            .ok_or_else(|| format!("could not construct link path to link from {:?} to {:?}", current_buf_parent_dir, link_to.path(&self.config)))?;
-        let link_path = link_path.to_str().ok_or_else(|| format!("could not convert link path to str: {link_path:?}"))?;
-
-        nvim.put(vec![format!("[{link_text}]({link_path})")], "c", false, true).await?;
+        let link_path_text = links::format_link(Some(current_buf_path), &link_to.path(&self.config))?;
+        nvim.put(vec![format!("[{link_text}]({link_path_text})")], "c", false, true).await?;
 
         Ok(())
     }
@@ -413,10 +406,7 @@ impl WikiPlugin {
 
                     let mut result = Vec::new();
                     for file in files {
-                        let link_path = diff_paths(file.0.path(&self.config), current_buf_parent_dir).ok_or_else(|| {
-                            format!("could not construct link path to link from {:?} to {:?}", current_buf_parent_dir, file.0.path(&self.config))
-                        })?;
-                        let link_path = link_path.to_str().ok_or_else(|| format!("could not convert link path to str: {link_path:?}"))?;
+                        let link_path = links::format_link(Some(current_note_full_path), &file.0.path(&self.config))?;
                         result.push(format!("- [{}]({})", file.1.unwrap_or("".to_string()), link_path));
                     }
 
