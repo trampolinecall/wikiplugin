@@ -10,6 +10,7 @@ use yaml_rust::Yaml;
 use crate::{error::Error, plugin::Config};
 
 #[derive(PartialEq, Eq)]
+// TODO: make separate structs for physical and scratch notes?
 pub enum Note {
     Physical { directories: Vec<String>, id: String },
     Scratch { buffer: Buffer<Compat<tokio::fs::File>> },
@@ -159,7 +160,7 @@ impl Note {
                 .map(|tag| Some(Tag::parse_from_str(tag.as_str()?)))
                 .collect::<Option<Vec<_>>>()
                 .ok_or("tags field is not array of strings")?),
-            _ => Err(format!("tags field is not string or array",).into()),
+            _ => Err("tags field is not string or array".to_string().into()),
         }
     }
 
