@@ -77,14 +77,14 @@ local function insert_link_attach_mappings(prompt_bufnr, map)
     actions.select_default:replace(function()
         actions.close(prompt_bufnr)
         local selection = action_state.get_selected_entry()
-        local note_id
+        local note_path
         if selection then
-            note_id = selection.note_id
+            note_path = selection.note_path
         else
-            note_id = nil
+            note_path = nil
         end
 
-        notify("insert_link_at_cursor_or_create")(note_id, nil)
+        notify("insert_link_to_path_at_cursor_or_create")(note_path, nil)
     end)
     return true
 end
@@ -104,16 +104,13 @@ local function search_by_title(attach_mappings, opts)
                     local parts = vim.split(entry, ':')
 
                     local note_title = parts[4]:match("^%s*(.-)%s*$") -- TODO: put this into a trim whitespace function
-
-                    local filepath = parts[1]
-                    -- TODO: properly support notes in other directories (because these are not reflected in the note id)
-                    local note_id = vim.split(vim.fs.basename(filepath), '.', { plain = true })[1]
+                    local filepath = vim.fn.fnamemodify(parts[1], ":p")
 
                     return {
                         value = entry,
                         display = note_title,
                         ordinal = note_title,
-                        note_id = note_id,
+                        note_path = filepath,
                     }
                 end,
             }
@@ -140,14 +137,13 @@ local function search_by_content(attach_mappings)
                 entry_maker = function(entry)
                     local parts = vim.split(entry, ':')
 
-                    local filepath = parts[1]
-                    local note_id = vim.split(vim.fs.basename(filepath), '.', { plain = true })[1]
+                    local filepath = vim.fn.fnamemodify(parts[1], ":p")
 
                     return {
                         value = entry,
                         display = entry,
                         ordinal = entry,
-                        note_id = note_id,
+                        note_path = filepath,
                     }
                 end,
             }
