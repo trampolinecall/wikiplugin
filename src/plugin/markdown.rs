@@ -1,4 +1,4 @@
-use markdown::mdast::Node;
+use markdown::mdast;
 use yaml_rust::Yaml;
 
 use crate::{
@@ -6,16 +6,16 @@ use crate::{
     plugin::{note::Tag, Config},
 };
 
-pub fn find_frontmatter(md: &Node) -> Result<String, Error> {
+pub fn find_frontmatter(md: &mdast::Node) -> Result<String, Error> {
     Ok(rec_find_preorder(md, &mut |node| match node {
-        Node::Yaml(yaml) => Some(yaml.value.clone()),
+        mdast::Node::Yaml(yaml) => Some(yaml.value.clone()),
         _ => None,
     })
     .ok_or("could not find frontmatter in file")?
     .1)
 }
 
-pub fn parse_frontmatter(md: &Node) -> Result<Yaml, Error> {
+pub fn parse_frontmatter(md: &mdast::Node) -> Result<Yaml, Error> {
     // TODO: swap_remove will panic if the yaml parser does not output any documents (i am not sure how that will happen though)
     Ok(yaml_rust::YamlLoader::load_from_str(&find_frontmatter(md)?)?.swap_remove(0))
 }
@@ -67,10 +67,55 @@ pub fn get_tags(frontmatter: &Yaml) -> Result<Vec<Tag>, Error> {
     }
 }
 
-pub fn rec_find_preorder<'md, R>(node: &'md Node, pred: &mut impl FnMut(&Node) -> Option<R>) -> Option<(&'md Node, R)> {
+pub fn get_all_links(md: &mdast::Node) -> Vec<&mdast::Link> {
+    /* TODO: these lifetimes do not work out
+    fn is_link(node: &mdast::Node) -> Option<&mdast::Link> {
+        match node {
+            mdast::Node::Link(link) => Some(link),
+            _ => None,
+        }
+    }
+    rec_filter_preorder(md, is_link)
+    */
+
+    fn is_link(node: &mdast::Node) -> Option<&mdast::Link> {
+        match node {
+            mdast::Node::Link(link) => Some(link),
+            _ => None,
+        }
+    }
+    fn helper<'md>(acc: &mut Vec<&'md mdast::Link>, node: &'md mdast::Node) {
+        if let Some(res) = is_link(node) {
+            acc.push(res)
+        }
+
+        for child in node.children().into_iter().flatten() {
+            helper(acc, child);
+        }
+    }
+    let mut result = Vec::new();
+    helper(&mut result, md);
+    result
+}
+
+pub fn rec_filter_preorder<R>(node: &mdast::Node, mut pred: impl for<'a> FnMut(&'a mdast::Node) -> Option<R>) -> Vec<R> {
+    fn helper<R>(acc: &mut Vec<R>, pred: &mut impl FnMut(&mdast::Node) -> Option<R>, node: &mdast::Node) {
+        if let Some(res) = pred(node) {
+            acc.push(res)
+        }
+
+        for child in node.children().into_iter().flatten() {
+            helper(acc, pred, child);
+        }
+    }
+    let mut result = Vec::new();
+    helper(&mut result, &mut pred, node);
+    result
+}
+pub fn rec_find_preorder<'md, R>(node: &'md mdast::Node, pred: &mut impl FnMut(&mdast::Node) -> Option<R>) -> Option<(&'md mdast::Node, R)> {
     pred(node).map(|r| (node, r)).or_else(|| node.children().into_iter().flatten().find_map(|sn| rec_find_preorder(sn, pred)))
 }
-pub fn rec_find_postorder<'md, R>(node: &'md Node, pred: &mut impl FnMut(&Node) -> Option<R>) -> Option<(&'md Node, R)> {
+pub fn rec_find_postorder<'md, R>(node: &'md mdast::Node, pred: &mut impl FnMut(&mdast::Node) -> Option<R>) -> Option<(&'md mdast::Node, R)> {
     node.children().into_iter().flatten().find_map(|sn| rec_find_postorder(sn, pred)).or_else(|| pred(node).map(|r| (node, r)))
 }
 
