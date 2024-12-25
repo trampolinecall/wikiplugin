@@ -4,15 +4,15 @@ use std::{
 };
 
 use markdown::{mdast::Node, to_mdast, Constructs, ParseOptions};
-use nvim_rs::{compat::tokio::Compat, Neovim};
+use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 use yaml_rust::Yaml;
 
 use crate::{error::Error, plugin::Config};
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Note {
-    pub directories: Vec<String>,
-    pub id: String,
+#[derive(PartialEq, Eq)]
+pub enum Note {
+    Physical { directories: Vec<String>, id: String }, // TODO: prefer contents read from buffer if this is modified in a buffer
+    Scratch { buffer: Buffer<Compat<tokio::fs::File>> },
 }
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
 pub struct Tag(Vec<String>);
@@ -27,8 +27,8 @@ impl std::fmt::Display for MdParseError {
 impl std::error::Error for MdParseError {}
 
 impl Note {
-    pub fn new(directories: Vec<String>, id: String) -> Note {
-        Note { directories, id }
+    pub fn new_physical(directories: Vec<String>, id: String) -> Note {
+        Note::Physical { directories, id }
     }
 
     // TODO: hide this function? replace it with get_current_buf_note?
@@ -41,7 +41,7 @@ impl Note {
             Err("absolute path that does not point to a file within the wiki home directory is not a note")?
         };
 
-        Ok(Note {
+        Ok(Note::Physical {
             directories: directories_path
                 .parent()
                 .ok_or("note path has no parent")?
@@ -53,16 +53,27 @@ impl Note {
         })
     }
 
-    pub fn path(&self, config: &Config) -> PathBuf {
-        let mut path = config.home_path.clone();
-        path.extend(&self.directories);
-        path.push(&self.id);
-        path.set_extension("md");
-        path
+    pub fn path(&self, config: &Config) -> Option<PathBuf> {
+        match self {
+            Note::Physical { directories, id } => {
+                let mut path = config.home_path.clone();
+                path.extend(directories);
+                path.push(id);
+                path.set_extension("md");
+                Some(path)
+            }
+            Note::Scratch { buffer: _ } => None,
+        }
     }
 
+    // TODO: prefer contents from nvim buffer if this exists in an nvim buffer
     pub async fn read_contents(&self, config: &Config) -> Result<String, Error> {
-        tokio::fs::read_to_string(self.path(config)).await.map_err(Into::into)
+        match self {
+            Note::Physical { directories: _, id: _ } => {
+                Ok(tokio::fs::read_to_string(self.path(config).expect("physical note always has path")).await?)
+            }
+            Note::Scratch { buffer } => Ok(buffer.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect()),
+        }
     }
 
     // TODO: sometimes this produces counterintuitive results (especially when being used to find
@@ -136,10 +147,12 @@ impl Note {
                 .map(|tag| Some(Tag::parse_from_str(tag.as_str()?)))
                 .collect::<Option<Vec<_>>>()
                 .ok_or("tags field is not array of strings")?),
-            _ => Err(format!("tags field of note {} is not string or array", self.id).into()),
+            _ => Err(format!("tags field is not string or array",).into()),
         }
     }
 
+    // TODO: do these functions
+    /*
     async fn get_buffer_in_nvim(
         &self,
         config: &Config,
@@ -174,6 +187,30 @@ impl Note {
                 Ok(Some(lines.join("\n")))
             }
             None => Ok(None),
+        }
+    }
+    */
+
+    /// Returns `true` if the note is [`Physical`].
+    ///
+    /// [`Physical`]: Note::Physical
+    #[must_use]
+    pub fn is_physical(&self) -> bool {
+        matches!(self, Self::Physical { .. })
+    }
+
+    /// Returns `true` if the note is [`Scratch`].
+    ///
+    /// [`Scratch`]: Note::Scratch
+    #[must_use]
+    pub fn is_scratch(&self) -> bool {
+        matches!(self, Self::Scratch { .. })
+    }
+
+    pub fn get_id(&self) -> Option<&str> {
+        match self {
+            Note::Physical { directories: _, id } => Some(id),
+            Note::Scratch { buffer: _ } => None,
         }
     }
 }

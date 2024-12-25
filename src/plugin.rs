@@ -71,13 +71,14 @@ impl nvim_rs::Handler for WikiPlugin {
             Message::OpenTagIndex {} => self.open_tag_index(&mut nvim).await,
             Message::FollowLink {} => self.follow_link(&mut nvim).await,
             Message::InsertLinkAtCursor { link_to_directories, link_to_id, link_text } => {
-                self.insert_link_at_cursor(&mut nvim, &Note::new(link_to_directories, link_to_id), link_text).await
+                // TODO: move this logic somewhere else
+                self.insert_link_at_cursor(&mut nvim, &Note::new_physical(link_to_directories, link_to_id), link_text).await
             }
             Message::InsertLinkAtCursorOrCreate { link_to_directories, link_to_id, link_text } => {
                 let n;
                 let note = match link_to_id {
                     Some(link_to_id) => {
-                        n = Note::new(link_to_directories, link_to_id);
+                        n = Note::new_physical(link_to_directories, link_to_id); // TODO: move this logic somewhere else
                         Some(&n)
                     }
                     None => None,
@@ -140,7 +141,7 @@ impl WikiPlugin {
             nvim.set_current_buf(&buf).await?;
         }
 
-        Ok(Note::new(directories, note_id))
+        Ok(Note::new_physical(directories, note_id))
     }
 
     async fn open_index(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
@@ -198,6 +199,10 @@ impl WikiPlugin {
         link_to: &Note,
         link_text: Option<String>,
     ) -> Result<(), Error> {
+        if link_to.is_scratch() {
+            Err("cannot link to scratch note")?
+        }
+
         let link_text = match link_text {
             Some(lt) => lt,
             None => link_to.scan_title(&self.config).await.unwrap_or(String::new()),
@@ -205,21 +210,26 @@ impl WikiPlugin {
 
         nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
         let current_buf_path = Path::new(current_buf_path_str);
-        let link_path_text = links::format_link(Some(current_buf_path), &link_to.path(&self.config))?;
+        let link_path_text = links::format_link(
+            Some(current_buf_path),
+            &link_to.path(&self.config).expect("note should always have a real path if it is not a scratch note"),
+        )?;
         nvim.put(vec![format!("[{link_text}]({link_path_text})")], "c", false, true).await?;
 
         Ok(())
     }
 
     async fn open_tag_index(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
-        let notes = self.list_all_notes()?;
+        let notes = self.list_all_physical_notes()?;
         let mut tag_table: BTreeMap<Tag, Vec<(&Note, String, PathBuf)>> = BTreeMap::new(); // TODO: eventually this should become &(Note, String, PathBuf)
         let mut tag_list = BTreeSet::new();
 
         for note in &notes {
+            assert!(note.is_physical(), "list_all_physical_notes should only return physical notes");
+
             let title = note.scan_title(&self.config).await?;
             let tags = note.scan_tags(&self.config).await.unwrap_or(Vec::new());
-            let path = note.path(&self.config);
+            let path = note.path(&self.config).expect("physical note should have a path");
 
             for tag in tags {
                 tag_table.entry(tag.clone()).or_default().push((note, title.clone(), path.clone()));
@@ -249,12 +259,12 @@ impl WikiPlugin {
 
     async fn follow_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
         nvim_eval_and_cast!(current_note_full_path, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
-        let path = Path::new(current_note_full_path);
-        let note = Note::parse_from_filepath(&self.config, path)?; // TODO: because scratch buffers do not have paths, this does not work when you are in a scratch buffer
-        let md = note.parse_markdown(&self.config).await?;
+        let current_path = Path::new(current_note_full_path);
+        let current_note = Note::parse_from_filepath(&self.config, current_path)?; // TODO: because scratch buffers do not have paths, this does not work when you are in a scratch buffer
+        let current_md = current_note.parse_markdown(&self.config).await?;
 
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
-        let (_, link_path) = note::markdown_recursive_find_preorder(&md, &mut |node| match node {
+        let (_, link_path) = note::markdown_recursive_find_preorder(&current_md, &mut |node| match node {
             markdown::mdast::Node::Link(markdown::mdast::Link { children: _, position: Some(position), url, title: _ }) => {
                 if note::point_in_position(position, cursor_byte_index.try_into().expect("byte index u64 does not fit into usize")) {
                     Some(url.to_string())
@@ -266,7 +276,7 @@ impl WikiPlugin {
         })
         .ok_or("not on a link")?;
 
-        let new_note_path = note.path(&self.config).parent().ok_or("note path has no parent")?.join(PathBuf::from(link_path));
+        let new_note_path = links::resolve_link(&self.config, &current_note, &link_path)?;
 
         nvim.cmd(
             vec![
@@ -376,17 +386,24 @@ impl WikiPlugin {
                     let sort_by = autogenerate_arguments.get(1).copied().unwrap_or("title");
 
                     let mut files = Vec::new();
-                    for file in self.list_all_notes()?.into_iter().filter(|note| note.directories == directory) {
-                        // TODO: having to do all of this is pretty messy but it is needed because the comparator cannot be async
-                        let title = file.scan_title(&self.config).await.ok();
-                        let timestamp = file.scan_timestamp(&self.config).await?;
-                        files.push((file, title, timestamp))
+                    for file in self.list_all_physical_notes()? {
+                        match file {
+                            Note::Physical { ref directories, id: _ } => {
+                                if *directories == directory {
+                                    // TODO: having to do all of this is pretty messy but it is needed because the comparator cannot be async
+                                    let title = file.scan_title(&self.config).await.ok();
+                                    let timestamp = file.scan_timestamp(&self.config).await?;
+                                    files.push((file, title, timestamp))
+                                }
+                            }
+                            Note::Scratch { buffer: _ } => unreachable!("list_all_physical_notes should only return physical notes"),
+                        }
                     }
 
                     let comparator = match sort_by {
                         "title" => |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| {
                             if a.1.is_none() || b.1.is_none() {
-                                a.0.id.cmp(&b.0.id)
+                                a.0.get_id().cmp(&b.0.get_id())
                             } else {
                                 a.1.cmp(&b.1)
                             }
@@ -394,19 +411,24 @@ impl WikiPlugin {
                         "date" => {
                             |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| a.2.cmp(&b.2)
                         }
-                        "id" => {
-                            |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| a.0.id.cmp(&b.0.id)
-                        }
+                        "id" => |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| {
+                            a.0.get_id().cmp(&b.0.get_id())
+                        },
                         _ => {
                             nvim.err_writeln(&format!("error: invalid comparison '{}'", sort_by)).await?;
-                            |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| a.0.id.cmp(&b.0.id)
+                            |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| {
+                                a.0.get_id().cmp(&b.0.get_id())
+                            }
                         }
                     };
                     files.sort_by(comparator);
 
                     let mut result = Vec::new();
                     for file in files {
-                        let link_path = links::format_link(Some(current_note_full_path), &file.0.path(&self.config))?;
+                        let link_path = links::format_link(
+                            Some(current_note_full_path),
+                            &file.0.path(&self.config).expect("list_all_physical_notes should always return a physical note"),
+                        )?;
                         result.push(format!("- [{}]({})", file.1.unwrap_or("".to_string()), link_path));
                     }
 
@@ -456,7 +478,7 @@ impl WikiPlugin {
         Ok(())
     }
 
-    fn list_all_notes(&self) -> Result<Vec<Note>, Error> {
+    fn list_all_physical_notes(&self) -> Result<Vec<Note>, Error> {
         glob::glob(&format!("{}/**/*.md", self.config.home_path.to_str().ok_or("wiki home path should always be valid unicode")?))?
             .map(|path| match path {
                 Ok(path) => {
