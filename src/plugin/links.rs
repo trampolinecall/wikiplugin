@@ -45,8 +45,6 @@ pub fn resolve_link(config: &Config, current_note: &Note, link_path_text: &str) 
     }
 }
 
-// TODO: fn resolve_link(current_note: &Note, link_path_text: &str) -> Result<PathBuf, _>
-
 #[cfg(test)]
 mod tests {
     use super::*;
