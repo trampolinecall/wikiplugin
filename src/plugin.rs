@@ -5,7 +5,7 @@ use std::{
 
 use nvim_oxi::{api, Dictionary};
 
-use crate::plugin::note::{Note, PhysicalNote, Tag};
+use crate::plugin::note::{Note, PhysicalNote, ScratchNote, Tag};
 
 mod links;
 mod markdown;
@@ -606,4 +606,45 @@ pub(crate) fn list_notes_lines_for_search(config: &Config) -> Result<Vec<Diction
                 .collect::<Vec<_>>()
         })
         .collect())
+}
+
+fn open_maintenance_index(config: &Config) -> Result<(), Error> {
+    async fn invalid_title(config: &Config, note: &PhysicalNote) -> bool {
+        note.parse_markdown(config)
+            .await
+            .and_then(|markdown| markdown::parse_frontmatter(&markdown))
+            .and_then(|frontmatter| markdown::get_title(&frontmatter))
+            .is_ok()
+    }
+
+    let notes = self.list_all_physical_notes()?;
+
+    let buffer = nvim.create_buf(true, true).await?;
+    buffer.set_option("filetype", "wikipluginnote".into()).await?;
+    let current_note = Note::Scratch(ScratchNote { buffer: buffer.clone() });
+
+    let insert_lines = |lines: Vec<String>| async {
+        buffer.set_lines(-2, -2, false, lines).await?;
+        Ok::<(), Error>(())
+    };
+    let insert_section = |title: String, lines: Vec<String>| async move {
+        insert_lines(vec![format!("# {title}"), "".to_string()]).await?;
+        insert_lines(lines).await?;
+        insert_lines(vec!["".to_string()]).await?;
+        Ok::<(), Error>(())
+    };
+
+    {
+        let mut invalid_titles = Vec::new();
+        let mut index = 0;
+        for note in &notes {
+            if invalid_title(&self.config, nvim, note).await {
+                invalid_titles.push(format!("- [unnamed {}]({})", index, links::format_link(&self.config, &current_note, &note.path(&self.config))?));
+                index += 1;
+            }
+        }
+        insert_section("invalid title".to_string(), invalid_titles).await?;
+    }
+
+    Ok(())
 }

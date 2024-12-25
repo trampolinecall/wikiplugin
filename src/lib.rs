@@ -101,5 +101,9 @@ fn wikiplugin_internal() -> Dictionary {
             "list_notes_lines_for_search",
             Object::from(Function::from_fn(|config: Dictionary| do_function(config, |config| plugin::list_notes_lines_for_search(&config)))),
         ),
+        (
+            "open_maintenance_index",
+            Object::from(Function::from_fn(|config: Dictionary| do_function(config, |config| plugin::open_maintenance_index(&config)))),
+        ),
     ])
 }
