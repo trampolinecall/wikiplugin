@@ -4,12 +4,15 @@ use pathdiff::diff_paths;
 
 use crate::{
     error::Error,
-    plugin::{note::Note, Config},
+    plugin::{
+        note::{Note, PhysicalNote, ScratchNote},
+        Config,
+    },
 };
 
 pub fn format_link(config: &Config, current_note: &Note, target_file_path: &Path) -> Result<String, Error> {
     match current_note {
-        Note::Physical { directories: _, id: _ } => {
+        Note::Physical(PhysicalNote { directories: _, id: _ }) => {
             let current_note_path = current_note.path(config).expect("physical note always has path");
             let current_file_parent_dir =
                 current_note_path.parent().ok_or_else(|| format!("could not get parent of current file path {}", current_note_path.display()))?;
@@ -17,7 +20,7 @@ pub fn format_link(config: &Config, current_note: &Note, target_file_path: &Path
                 .ok_or_else(|| format!("could not construct link from {} to {}", current_note_path.display(), target_file_path.display()))?;
             Ok(result.to_str().ok_or_else(|| format!("could not convert link path to string: {}", result.display()))?.to_string())
         }
-        Note::Scratch { buffer: _ } => Ok(target_file_path
+        Note::Scratch(ScratchNote { buffer: _ }) => Ok(target_file_path
             .to_str()
             .ok_or_else(|| format!("could not convert link target path to string: {}", target_file_path.display()))?
             .to_string()),
@@ -27,10 +30,10 @@ pub fn format_link(config: &Config, current_note: &Note, target_file_path: &Path
 pub fn resolve_link(config: &Config, current_note: &Note, link_path_text: &str) -> Result<PathBuf, Error> {
     let link_path = Path::new(link_path_text);
     match current_note {
-        Note::Physical { directories: _, id: _ } => {
+        Note::Physical(PhysicalNote { directories: _, id: _ }) => {
             Ok(current_note.path(config).expect("physical note should always have a path").parent().ok_or("note path has no parent")?.join(link_path))
         }
-        Note::Scratch { buffer: _ } => {
+        Note::Scratch(ScratchNote { buffer: _ }) => {
             // if this is a scratch buffer, there is no current path
             // so we open the target directory if it is absolute, and if not, make it absolute by prepending the config home directory
             if link_path.is_absolute() {

@@ -11,7 +11,7 @@ use crate::{
     error::Error,
     plugin::{
         messages::Message,
-        note::{Note, Tag},
+        note::{Note, PhysicalNote, Tag},
     },
 };
 
@@ -171,7 +171,7 @@ impl WikiPlugin {
         let note = match link_to {
             Some(link_to_path) => {
                 let path = Path::new(&link_to_path);
-                n = Note::parse_from_filepath(&self.config, path)?;
+                n = Note::Physical(PhysicalNote::parse_from_filepath(&self.config, path)?);
                 Some(&n)
             }
             None => None,
@@ -202,38 +202,35 @@ impl WikiPlugin {
         link_to: &Note,
         link_text: Option<String>,
     ) -> Result<(), Error> {
-        if link_to.is_scratch() {
-            Err("cannot link to scratch note")?
+        match link_to {
+            Note::Physical(link_to) => {
+                let link_text = match link_text {
+                    Some(lt) => lt,
+                    None => {
+                        markdown::get_title(&markdown::parse_frontmatter(&link_to.parse_markdown(&self.config, nvim).await?)?).unwrap_or_default()
+                    }
+                };
+
+                let current_note = Note::get_current_note(&self.config, nvim).await?;
+                let link_path_text = links::format_link(&self.config, &current_note, &link_to.path(&self.config))?;
+                nvim.put(vec![format!("[{link_text}]({link_path_text})")], "c", false, true).await?;
+
+                Ok(())
+            }
+            Note::Scratch(_) => Err("cannot link to scratch note")?,
         }
-
-        let link_text = match link_text {
-            Some(lt) => lt,
-            None => markdown::get_title(&markdown::parse_frontmatter(&link_to.parse_markdown(&self.config, nvim).await?)?).unwrap_or_default(),
-        };
-
-        let current_note = Note::get_current_note(&self.config, nvim).await?;
-        let link_path_text = links::format_link(
-            &self.config,
-            &current_note,
-            &link_to.path(&self.config).expect("note should always have a real path if it is not a scratch note"),
-        )?;
-        nvim.put(vec![format!("[{link_text}]({link_path_text})")], "c", false, true).await?;
-
-        Ok(())
     }
 
     async fn open_tag_index(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
         let notes = self.list_all_physical_notes()?;
-        let mut tag_table: BTreeMap<Tag, Vec<(&Note, String, PathBuf)>> = BTreeMap::new(); // TODO: eventually this should become &(Note, String, PathBuf)
+        let mut tag_table: BTreeMap<Tag, Vec<(&PhysicalNote, String, PathBuf)>> = BTreeMap::new(); // TODO: eventually this should become &(Note, String, PathBuf)
         let mut tag_list = BTreeSet::new();
 
         for note in &notes {
-            assert!(note.is_physical(), "list_all_physical_notes should only return physical notes");
-
             let frontmatter = markdown::parse_frontmatter(&note.parse_markdown(&self.config, nvim).await?)?;
             let title = markdown::get_title(&frontmatter)?;
             let tags = markdown::get_tags(&frontmatter).unwrap_or_default();
-            let path = note.path(&self.config).expect("physical note should have a path");
+            let path = note.path(&self.config);
 
             for tag in tags {
                 tag_table.entry(tag.clone()).or_default().push((note, title.clone(), path.clone()));
@@ -385,39 +382,33 @@ impl WikiPlugin {
 
                     let mut files = Vec::new();
                     for file in self.list_all_physical_notes()? {
-                        match file {
-                            Note::Physical { ref directories, id: _ } => {
-                                if *directories == directory {
-                                    let md = file.parse_markdown(&self.config, nvim).await?;
-                                    let frontmatter = markdown::parse_frontmatter(&md)?;
-                                    // TODO: having to do all of this is pretty messy but it is needed because the comparator cannot be async
-                                    let title = markdown::get_title(&frontmatter).ok();
-                                    let timestamp = markdown::get_timestamp(&frontmatter, &self.config)?;
-                                    files.push((file, title, timestamp))
-                                }
-                            }
-                            Note::Scratch { buffer: _ } => unreachable!("list_all_physical_notes should only return physical notes"),
+                        if file.directories == directory {
+                            let md = file.parse_markdown(&self.config, nvim).await?;
+                            let frontmatter = markdown::parse_frontmatter(&md)?;
+                            // TODO: having to do all of this is pretty messy but it is needed because the comparator cannot be async
+                            let title = markdown::get_title(&frontmatter).ok();
+                            let timestamp = markdown::get_timestamp(&frontmatter, &self.config)?;
+                            files.push((file, title, timestamp))
                         }
                     }
 
                     let comparator = match sort_by {
-                        "title" => |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| {
+                        "title" => |a: &(PhysicalNote, Option<String>, chrono::NaiveDateTime),
+                                    b: &(PhysicalNote, Option<String>, chrono::NaiveDateTime)| {
                             if a.1.is_none() || b.1.is_none() {
-                                a.0.get_id().cmp(&b.0.get_id())
+                                a.0.id.cmp(&b.0.id)
                             } else {
                                 a.1.cmp(&b.1)
                             }
                         },
-                        "date" => {
-                            |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| a.2.cmp(&b.2)
-                        }
-                        "id" => |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| {
-                            a.0.get_id().cmp(&b.0.get_id())
-                        },
+                        "date" => |a: &(PhysicalNote, Option<String>, chrono::NaiveDateTime),
+                                   b: &(PhysicalNote, Option<String>, chrono::NaiveDateTime)| { a.2.cmp(&b.2) },
+                        "id" => |a: &(PhysicalNote, Option<String>, chrono::NaiveDateTime),
+                                 b: &(PhysicalNote, Option<String>, chrono::NaiveDateTime)| { a.0.id.cmp(&b.0.id) },
                         _ => {
                             nvim.err_writeln(&format!("error: invalid comparison '{}'", sort_by)).await?;
-                            |a: &(Note, Option<String>, chrono::NaiveDateTime), b: &(Note, Option<String>, chrono::NaiveDateTime)| {
-                                a.0.get_id().cmp(&b.0.get_id())
+                            |a: &(PhysicalNote, Option<String>, chrono::NaiveDateTime), b: &(PhysicalNote, Option<String>, chrono::NaiveDateTime)| {
+                                a.0.id.cmp(&b.0.id)
                             }
                         }
                     };
@@ -425,11 +416,7 @@ impl WikiPlugin {
 
                     let mut result = Vec::new();
                     for file in files {
-                        let link_path = links::format_link(
-                            &self.config,
-                            &current_note,
-                            &file.0.path(&self.config).expect("list_all_physical_notes should always return a physical note"),
-                        )?;
+                        let link_path = links::format_link(&self.config, &current_note, &file.0.path(&self.config))?;
                         result.push(format!("- [{}]({})", file.1.unwrap_or("".to_string()), link_path));
                     }
 
@@ -479,12 +466,12 @@ impl WikiPlugin {
         Ok(())
     }
 
-    fn list_all_physical_notes(&self) -> Result<Vec<Note>, Error> {
+    fn list_all_physical_notes(&self) -> Result<Vec<PhysicalNote>, Error> {
         glob::glob(&format!("{}/**/*.md", self.config.home_path.to_str().ok_or("wiki home path should always be valid unicode")?))?
             .map(|path| match path {
                 Ok(path) => {
                     let path = path.as_path();
-                    Note::parse_from_filepath(&self.config, path)
+                    PhysicalNote::parse_from_filepath(&self.config, path)
                 }
                 Err(e) => Err(e)?,
             })

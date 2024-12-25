@@ -9,10 +9,20 @@ use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 use crate::{error::Error, plugin::Config};
 
 #[derive(PartialEq, Eq)]
-// TODO: make separate structs for physical and scratch notes?
+pub struct PhysicalNote {
+    pub directories: Vec<String>,
+    pub id: String,
+}
+
+#[derive(PartialEq, Eq)]
+pub struct ScratchNote {
+    pub buffer: Buffer<Compat<tokio::fs::File>>,
+}
+
+#[derive(PartialEq, Eq)]
 pub enum Note {
-    Physical { directories: Vec<String>, id: String },
-    Scratch { buffer: Buffer<Compat<tokio::fs::File>> },
+    Physical(PhysicalNote),
+    Scratch(ScratchNote),
 }
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
 pub struct Tag(Vec<String>);
@@ -26,25 +36,9 @@ impl std::fmt::Display for MdParseError {
 }
 impl std::error::Error for MdParseError {}
 
-impl Note {
-    pub fn new_physical(directories: Vec<String>, id: String) -> Note {
-        Note::Physical { directories, id }
-    }
-
-    pub async fn get_current_note(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Note, Error> {
-        let current_buf = nvim.get_current_buf().await?;
-        let is_scratch = current_buf.get_option("buftype").await?.as_str().expect("option buftype should be a bool") == "nofile";
-        if is_scratch {
-            Ok(Note::Scratch { buffer: current_buf })
-        } else {
-            nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
-            let path = Path::new(current_buf_path_str);
-            Note::parse_from_filepath(config, path)
-        }
-    }
-
+impl PhysicalNote {
     // TODO: hide this function? replace it with get_current_buf_note?
-    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<Note, Error> {
+    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, Error> {
         let directories_path = if path.starts_with(&config.home_path) {
             path.strip_prefix(&config.home_path).expect("strip_prefix should return Ok if starts_with returns true")
         } else if !path.is_absolute() {
@@ -53,7 +47,7 @@ impl Note {
             Err("absolute path that does not point to a file within the wiki home directory is not a note")?
         };
 
-        Ok(Note::Physical {
+        Ok(PhysicalNote {
             directories: directories_path
                 .parent()
                 .ok_or("note path has no parent")?
@@ -65,29 +59,100 @@ impl Note {
         })
     }
 
+    pub fn path(&self, config: &Config) -> PathBuf {
+        let mut path = config.home_path.clone();
+        path.extend(&self.directories);
+        path.push(&self.id);
+        path.set_extension("md");
+        path
+    }
+
+    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
+        if let Some(buffer_contents) = self.read_contents_in_nvim(config, nvim).await? {
+            Ok(buffer_contents)
+        } else {
+            Ok(tokio::fs::read_to_string(self.path(config)).await?)
+        }
+    }
+    // TODO: this is also duplicated verbatim with Note
+    pub async fn parse_markdown(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Node, Error> {
+        Ok(to_mdast(
+            &self.read_contents(config, nvim).await?,
+            &ParseOptions { constructs: Constructs { frontmatter: true, ..Constructs::gfm() }, ..ParseOptions::gfm() },
+        )
+        .map_err(MdParseError)?)
+    }
+
+    async fn get_buffer_in_nvim(
+        &self,
+        config: &Config,
+        nvim: &mut Neovim<Compat<tokio::fs::File>>,
+    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
+        let buflist = nvim.list_bufs().await?;
+        let mut current_buf = None;
+        for buf in buflist {
+            let buf_number = &buf.get_number().await?;
+            nvim_eval_and_cast!(
+                buf_path,
+                nvim,
+                &format!(r##"expand("#{}:p")"##, buf_number),
+                as_str,
+                "vim function expand( should always return a number"
+            );
+            let buf_path = Path::new(buf_path);
+            if buf_path == self.path(config) {
+                current_buf = Some(buf);
+                break;
+            }
+        }
+
+        match current_buf {
+            Some(b) => {
+                if b.is_loaded().await? {
+                    Ok(Some(b))
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
+    // TODO: this function is duplicated verbatim with Note
+    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
+        match self.get_buffer_in_nvim(config, nvim).await? {
+            Some(buf) => Ok(Some(buf.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect())),
+            None => Ok(None),
+        }
+    }
+}
+impl Note {
+    pub fn new_physical(directories: Vec<String>, id: String) -> Note {
+        Note::Physical(PhysicalNote { directories, id })
+    }
+
+    pub async fn get_current_note(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Note, Error> {
+        let current_buf = nvim.get_current_buf().await?;
+        let is_scratch = current_buf.get_option("buftype").await?.as_str().expect("option buftype should be a bool") == "nofile";
+        if is_scratch {
+            Ok(Note::Scratch(ScratchNote { buffer: current_buf }))
+        } else {
+            nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
+            let path = Path::new(current_buf_path_str);
+            Ok(Note::Physical(PhysicalNote::parse_from_filepath(config, path)?))
+        }
+    }
+
     pub fn path(&self, config: &Config) -> Option<PathBuf> {
         match self {
-            Note::Physical { directories, id } => {
-                let mut path = config.home_path.clone();
-                path.extend(directories);
-                path.push(id);
-                path.set_extension("md");
-                Some(path)
-            }
-            Note::Scratch { buffer: _ } => None,
+            Note::Physical(n) => Some(n.path(config)),
+            Note::Scratch(ScratchNote { buffer: _ }) => None,
         }
     }
 
     pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
         match self {
-            Note::Physical { directories: _, id: _ } => {
-                if let Some(buffer_contents) = self.read_contents_in_nvim(config, nvim).await? {
-                    Ok(buffer_contents)
-                } else {
-                    Ok(tokio::fs::read_to_string(self.path(config).expect("physical note always has path")).await?)
-                }
-            }
-            Note::Scratch { buffer } => Ok(buffer.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect()),
+            Note::Physical(n) => n.read_contents(config, nvim).await,
+            Note::Scratch(ScratchNote { buffer }) => Ok(buffer.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect()),
         }
     }
 
@@ -105,37 +170,8 @@ impl Note {
         nvim: &mut Neovim<Compat<tokio::fs::File>>,
     ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
         match self {
-            Note::Physical { directories: _, id: _ } => {
-                let buflist = nvim.list_bufs().await?;
-                let mut current_buf = None;
-                for buf in buflist {
-                    let buf_number = &buf.get_number().await?;
-                    nvim_eval_and_cast!(
-                        buf_path,
-                        nvim,
-                        &format!(r##"expand("#{}:p")"##, buf_number),
-                        as_str,
-                        "vim function expand( should always return a number"
-                    );
-                    let buf_path = Path::new(buf_path);
-                    if buf_path == self.path(config).expect("physical note should always have path") {
-                        current_buf = Some(buf);
-                        break;
-                    }
-                }
-
-                match current_buf {
-                    Some(b) => {
-                        if b.is_loaded().await? {
-                            Ok(Some(b))
-                        } else {
-                            Ok(None)
-                        }
-                    }
-                    None => Ok(None),
-                }
-            }
-            Note::Scratch { buffer } => Ok(Some(buffer.clone())),
+            Note::Physical(n) => n.get_buffer_in_nvim(config, nvim).await,
+            Note::Scratch(ScratchNote { buffer }) => Ok(Some(buffer.clone())),
         }
     }
     async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
@@ -163,8 +199,8 @@ impl Note {
 
     pub fn get_id(&self) -> Option<&str> {
         match self {
-            Note::Physical { directories: _, id } => Some(id),
-            Note::Scratch { buffer: _ } => None,
+            Note::Physical(PhysicalNote { directories: _, id }) => Some(id),
+            Note::Scratch(ScratchNote { buffer: _ }) => None,
         }
     }
 }
