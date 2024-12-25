@@ -239,7 +239,6 @@ mod tests {
             time_format: String::new(),
         };
 
-        let note_parse_error = Note::parse_from_filepath(&config, Path::new("/some/other/directory/note.md"))
-            .expect_err("parse from filepath should not work in this case");
+        Note::parse_from_filepath(&config, Path::new("/some/other/directory/note.md")).expect_err("parse from filepath should not work in this case");
     }
 }
