@@ -12,7 +12,7 @@ trait FromNvimValue: Sized {
 
 impl<T: FromNvimValue> FromNvimValue for Vec<T> {
     fn convert(v: &nvim_rs::Value) -> Option<Self> {
-        v.as_array()?.into_iter().map(|v| T::convert(v)).collect::<Option<Vec<_>>>()
+        v.as_array()?.iter().map(|v| T::convert(v)).collect::<Option<Vec<_>>>()
     }
 
     fn type_description() -> String {
