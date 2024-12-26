@@ -476,6 +476,11 @@ impl WikiPlugin {
                 .and_then(|frontmatter| markdown::get_title(&frontmatter))
                 .is_ok()
         }
+        // TODO: flag files that are only frontmatter
+        async fn empty(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>, note: &PhysicalNote) -> bool {
+            note.read_contents(config, nvim).await.map(|contents| contents.trim_start().trim_end() == "").unwrap_or(false)
+        }
+        // TODO: scan for todos
 
         let notes = self.list_all_physical_notes()?;
 
@@ -508,6 +513,18 @@ impl WikiPlugin {
                 }
             }
             insert_section("invalid title".to_string(), invalid_titles).await?;
+        }
+
+        {
+            let mut empty_files = Vec::new();
+            let mut index = 0;
+            for note in &notes {
+                if empty(&self.config, nvim, note).await {
+                    empty_files.push(format!("- [empty {}]({})", index, links::format_link(&self.config, &current_note, &note.path(&self.config))?));
+                    index += 1;
+                }
+            }
+            insert_section("completely empty".to_string(), empty_files).await?;
         }
 
         Ok(())
