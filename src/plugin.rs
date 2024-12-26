@@ -38,8 +38,12 @@ pub struct Config {
 impl Config {
     pub fn parse_from_args() -> Config {
         let mut args = std::env::args().skip(1);
+        let home_path: PathBuf = args.next().expect("first argument should be wiki home path").into();
+        if !home_path.is_absolute() {
+            panic!("home path should be absolute");
+        }
         let c = Config {
-            home_path: args.next().expect("first argument should be wiki home path").into(),
+            home_path,
             note_id_timestamp_format: args.next().expect("second argument should be note id timestamp format"),
             date_format: args.next().expect("third argument should be date format"),
             time_format: args.next().expect("fourth argument should be time format"),
