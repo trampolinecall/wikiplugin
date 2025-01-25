@@ -7,7 +7,7 @@ use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
 use crate::{error::Error, plugin::Config};
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct PhysicalNote {
     pub directories: Vec<String>,
     pub id: String,
@@ -203,8 +203,8 @@ mod tests {
             time_format: String::new(),
         };
 
-        let note_parsed = Note::parse_from_filepath(&config, Path::new("dir1/dir2/note.md")).expect("parse from filepath should work");
-        assert_eq!(note_parsed, Note { directories: vec!["dir1".to_string(), "dir2".to_string()], id: "note".to_string() });
+        let note_parsed = PhysicalNote::parse_from_filepath(&config, Path::new("dir1/dir2/note.md")).expect("parse from filepath should work");
+        assert_eq!(note_parsed, PhysicalNote { directories: vec!["dir1".to_string(), "dir2".to_string()], id: "note".to_string() });
     }
 
     #[test]
@@ -216,8 +216,9 @@ mod tests {
             time_format: String::new(),
         };
 
-        let note_parsed = Note::parse_from_filepath(&config, Path::new("/path/to/wiki/dir1/dir2/note.md")).expect("parse from filepath should work");
-        assert_eq!(note_parsed, Note { directories: vec!["dir1".to_string(), "dir2".to_string()], id: "note".to_string() });
+        let note_parsed =
+            PhysicalNote::parse_from_filepath(&config, Path::new("/path/to/wiki/dir1/dir2/note.md")).expect("parse from filepath should work");
+        assert_eq!(note_parsed, PhysicalNote { directories: vec!["dir1".to_string(), "dir2".to_string()], id: "note".to_string() });
     }
 
     #[test]
@@ -229,6 +230,7 @@ mod tests {
             time_format: String::new(),
         };
 
-        Note::parse_from_filepath(&config, Path::new("/some/other/directory/note.md")).expect_err("parse from filepath should not work in this case");
+        PhysicalNote::parse_from_filepath(&config, Path::new("/some/other/directory/note.md"))
+            .expect_err("parse from filepath should not work in this case");
     }
 }
