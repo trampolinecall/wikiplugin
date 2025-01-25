@@ -8,7 +8,7 @@ use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
 use crate::plugin::Config;
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct PhysicalNote {
     pub directories: Vec<String>,
     pub id: String,
@@ -30,12 +30,11 @@ pub struct Tag(Vec<String>);
 impl PhysicalNote {
     // TODO: hide this function? replace it with get_current_buf_note?
     pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, Error> {
-        let directories_path = if path.starts_with(&config.home_path) {
-            path.strip_prefix(&config.home_path).expect("strip_prefix should return Ok if starts_with returns true")
-        } else if !path.is_absolute() {
-            path
+        let path_abs_canon = if path.is_absolute() { path.canonicalize()? } else { config.home_path.join(path).canonicalize()? };
+        let directories_path = if path_abs_canon.starts_with(&config.home_path) {
+            path_abs_canon.strip_prefix(&config.home_path).expect("strip_prefix should return Ok if starts_with returns true")
         } else {
-            Err(Error::msg("absolute path that does not point to a file within the wiki home directory is not a note"))?
+            Err(Error::msg("path that does not point to a file within the wiki home directory is not a note"))?
         };
 
         Ok(PhysicalNote {
@@ -64,6 +63,7 @@ impl PhysicalNote {
     }
 
     pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
+        log::info!("reading contents of file {}", self.path(config).display());
         if let Some(buffer_contents) = self.read_contents_in_nvim(config, nvim).await? {
             Ok(buffer_contents)
         } else {

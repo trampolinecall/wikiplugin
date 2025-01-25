@@ -245,7 +245,7 @@ impl WikiPlugin {
 
         for note in &notes {
             let frontmatter = markdown::parse_frontmatter(&markdown::parse_markdown(&note.read_contents(&self.config, nvim).await?)?)?;
-            let title = markdown::get_title(&frontmatter)?;
+            let title = markdown::get_title(&frontmatter).unwrap_or_default();
             let tags = markdown::get_tags(&frontmatter).unwrap_or_default();
             let path = note.path(&self.config);
 
@@ -480,7 +480,7 @@ impl WikiPlugin {
 
                         let other_note_contents = other_note.read_contents(&self.config, nvim).await?;
                         let other_note_markdown = markdown::parse_markdown(&other_note_contents)?;
-                        let other_note_title = markdown::get_title(&markdown::parse_frontmatter(&other_note_markdown)?)?;
+                        let other_note_title = markdown::get_title(&markdown::parse_frontmatter(&other_note_markdown)?).unwrap_or_default();
                         let other_note_links = markdown::get_all_links(&other_note_markdown);
 
                         for link in other_note_links {
@@ -494,6 +494,40 @@ impl WikiPlugin {
                                 break;
                             }
                         }
+                    }
+
+                    Some(result)
+                }
+
+                "explore" => {
+                    let root = Note::get_current_note(&self.config, nvim).await?;
+
+                    let mut explored = BTreeSet::new();
+                    let mut frontier = vec![root.clone()];
+                    while let Some(current) = frontier.pop() {
+                        let current_contents = current.read_contents(&self.config, nvim).await?;
+                        let current_markdown = markdown::parse_markdown(&current_contents)?;
+                        let current_links = markdown::get_all_links(&current_markdown);
+
+                        for link in current_links {
+                            let linked =
+                                PhysicalNote::parse_from_filepath(&self.config, &links::resolve_link_path(&self.config, &current, &link.url)?)?;
+                            let linked_as_note = Note::Physical(linked.clone()); // TODO: do not clone
+                            if linked_as_note != root && !explored.contains(&linked) {
+                                frontier.push(linked_as_note);
+                                explored.insert(linked);
+                            }
+                        }
+                    }
+
+                    let mut result = Vec::new();
+
+                    for note in explored {
+                        let title = markdown::get_title(&markdown::parse_frontmatter(&markdown::parse_markdown(
+                            &note.read_contents(&self.config, nvim).await?,
+                        )?)?)
+                        .unwrap_or_default();
+                        result.push(format!("- [{}]({})", title, links::format_link_path(&self.config, &root, &note.path(&self.config))?));
                     }
 
                     Some(result)
