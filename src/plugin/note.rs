@@ -3,7 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use markdown::{mdast::Node, to_mdast, Constructs, ParseOptions};
 use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
 use crate::{error::Error, plugin::Config};
