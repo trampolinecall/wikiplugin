@@ -27,15 +27,6 @@ pub enum Note {
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
 pub struct Tag(Vec<String>);
 
-#[derive(Debug)]
-struct MdParseError(markdown::message::Message);
-impl std::fmt::Display for MdParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for MdParseError {}
-
 impl PhysicalNote {
     // TODO: hide this function? replace it with get_current_buf_note?
     pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, Error> {
@@ -73,14 +64,6 @@ impl PhysicalNote {
         } else {
             Ok(tokio::fs::read_to_string(self.path(config)).await?)
         }
-    }
-    // TODO: this is also duplicated verbatim with Note
-    pub async fn parse_markdown(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Node, Error> {
-        Ok(to_mdast(
-            &self.read_contents(config, nvim).await?,
-            &ParseOptions { constructs: Constructs { frontmatter: true, ..Constructs::gfm() }, ..ParseOptions::gfm() },
-        )
-        .map_err(MdParseError)?)
     }
 
     async fn get_buffer_in_nvim(
@@ -154,14 +137,6 @@ impl Note {
             Note::Physical(n) => n.read_contents(config, nvim).await,
             Note::Scratch(ScratchNote { buffer }) => Ok(buffer.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect()),
         }
-    }
-
-    pub async fn parse_markdown(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Node, Error> {
-        Ok(to_mdast(
-            &self.read_contents(config, nvim).await?,
-            &ParseOptions { constructs: Constructs { frontmatter: true, ..Constructs::gfm() }, ..ParseOptions::gfm() },
-        )
-        .map_err(MdParseError)?)
     }
 
     async fn get_buffer_in_nvim(

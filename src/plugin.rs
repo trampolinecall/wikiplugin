@@ -222,9 +222,10 @@ impl WikiPlugin {
             Note::Physical(link_to) => {
                 let link_text = match link_text {
                     Some(lt) => lt,
-                    None => {
-                        markdown::get_title(&markdown::parse_frontmatter(&link_to.parse_markdown(&self.config, nvim).await?)?).unwrap_or_default()
-                    }
+                    None => markdown::get_title(&markdown::parse_frontmatter(&markdown::parse_markdown(
+                        &link_to.read_contents(&self.config, nvim).await?,
+                    )?)?)
+                    .unwrap_or_default(),
                 };
 
                 let current_note = Note::get_current_note(&self.config, nvim).await?;
@@ -243,7 +244,7 @@ impl WikiPlugin {
         let mut tag_list = BTreeSet::new();
 
         for note in &notes {
-            let frontmatter = markdown::parse_frontmatter(&note.parse_markdown(&self.config, nvim).await?)?;
+            let frontmatter = markdown::parse_frontmatter(&markdown::parse_markdown(&note.read_contents(&self.config, nvim).await?)?)?;
             let title = markdown::get_title(&frontmatter)?;
             let tags = markdown::get_tags(&frontmatter).unwrap_or_default();
             let path = note.path(&self.config);
@@ -276,7 +277,7 @@ impl WikiPlugin {
 
     async fn follow_link(&self, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<(), Error> {
         let current_note = Note::get_current_note(&self.config, nvim).await?;
-        let current_md = current_note.parse_markdown(&self.config, nvim).await?;
+        let current_md = markdown::parse_markdown(&current_note.read_contents(&self.config, nvim).await?)?;
 
         nvim_eval_and_cast!(cursor_byte_index, nvim, r#"line2byte(line(".")) + col(".") - 1 - 1"#, as_u64, "byte index should be a number");
         let (_, link_path) = markdown::rec_find_preorder(&current_md, &mut |node| match node {
@@ -416,7 +417,7 @@ impl WikiPlugin {
                     let mut files = Vec::new();
                     for file in self.list_all_physical_notes()? {
                         if file.directories == directory {
-                            let md = file.parse_markdown(&self.config, nvim).await?;
+                            let md = markdown::parse_markdown(&file.read_contents(&self.config, nvim).await?)?;
                             let frontmatter = markdown::parse_frontmatter(&md)?;
                             // TODO: having to do all of this is pretty messy but it is needed because the comparator cannot be async
                             let title = markdown::get_title(&frontmatter).ok();

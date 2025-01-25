@@ -1,4 +1,4 @@
-use markdown::mdast;
+use markdown::{mdast, to_mdast};
 use yaml_rust::Yaml;
 
 use crate::{
@@ -6,6 +6,26 @@ use crate::{
     plugin::{note::Tag, Config},
 };
 
+#[derive(Debug)]
+struct MdParseError(markdown::message::Message);
+impl std::fmt::Display for MdParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for MdParseError {}
+
+pub fn parse_markdown(contents: &str) -> Result<mdast::Node, Error> {
+    let map_err = to_mdast(
+        contents,
+        &markdown::ParseOptions {
+            constructs: markdown::Constructs { frontmatter: true, ..markdown::Constructs::gfm() },
+            ..markdown::ParseOptions::gfm()
+        },
+    )
+    .map_err(MdParseError);
+    Ok(map_err?)
+}
 pub fn find_frontmatter(md: &mdast::Node) -> Result<String, Error> {
     Ok(rec_find_preorder(md, &mut |node| match node {
         mdast::Node::Yaml(yaml) => Some(yaml.value.clone()),
