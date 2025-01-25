@@ -458,30 +458,34 @@ impl WikiPlugin {
                 }
 
                 "backlinks" => {
-                    /*
-                    local result = {}
+                    // TODO: this is extremely slow
+                    let current_note = Note::get_current_note(&self.config, nvim).await?;
+                    let mut result = Vec::new();
 
-                    for _, filename in ipairs(list_all_files()) do
-                        local file_contents = vim.fn.readfile(filename)
-                        local _, note_contents = split_lines_into_frontmatter_and_content(file_contents)
-                        local note_title = scan_note_title(file_contents)
+                    for other_note in self.list_all_physical_notes()? {
+                        if current_note.as_physical() == Some(&other_note) {
+                            continue;
+                        }
 
-                        for _, link in ipairs(scan_for_links(note_contents)) do
-                            local link_text = link[1]
-                            local link_path = link[2]
-                            local linked_file_path = find_link_file(filename, link_path)
-                            if linked_file_path == Path:new(current_buf_filename):absolute() then
-                                table.insert(result, "- [" .. (note_title or "") .. "](" .. Path:new(filename):make_relative(current_buf_parent_dir) .. ")")
-                                break
-                            end
-                        end
+                        let other_note_contents = other_note.read_contents(&self.config, nvim).await?;
+                        let other_note_markdown = markdown::parse_markdown(&other_note_contents)?;
+                        let other_note_title = markdown::get_title(&markdown::parse_frontmatter(&other_note_markdown)?)?;
+                        let other_note_links = markdown::get_all_links(&other_note_markdown);
 
-                    end
+                        for link in other_note_links {
+                            let link_to = links::resolve_link_path(&self.config, &Note::Physical(other_note.clone()), &link.url)?; // TODO: do not clone
+                            if Some(&link_to) == current_note.path(&self.config).as_ref() {
+                                result.push(format!(
+                                    "- [{}]({})",
+                                    other_note_title,
+                                    links::format_link_path(&self.config, &current_note, &other_note.path(&self.config))?
+                                ));
+                                break;
+                            }
+                        }
+                    }
 
-                    return result
-                        */
-                    nvim.err_writeln("backlinks autogeneration has not been implemented yet").await?; // TODO
-                    Some(vec![])
+                    Some(result)
                 }
 
                 _ => {

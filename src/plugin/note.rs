@@ -7,18 +7,18 @@ use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
 use crate::{error::Error, plugin::Config};
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct PhysicalNote {
     pub directories: Vec<String>,
     pub id: String,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct ScratchNote {
     pub buffer: Buffer<Compat<tokio::fs::File>>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub enum Note {
     Physical(PhysicalNote),
     Scratch(ScratchNote),
@@ -175,6 +175,22 @@ impl Note {
         match self {
             Note::Physical(PhysicalNote { directories: _, id }) => Some(id),
             Note::Scratch(ScratchNote { buffer: _ }) => None,
+        }
+    }
+
+    pub fn as_physical(&self) -> Option<&PhysicalNote> {
+        if let Self::Physical(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_scratch(&self) -> Option<&ScratchNote> {
+        if let Self::Scratch(v) = self {
+            Some(v)
+        } else {
+            None
         }
     }
 }
