@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.95"
 async-trait = "0.1.81"
 chrono = "0.4.38"
 flexi_logger = "0.28.5"

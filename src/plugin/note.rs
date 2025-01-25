@@ -3,9 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::Error;
 use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
-use crate::{error::Error, plugin::Config};
+use crate::plugin::Config;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct PhysicalNote {
@@ -34,18 +35,23 @@ impl PhysicalNote {
         } else if !path.is_absolute() {
             path
         } else {
-            Err("absolute path that does not point to a file within the wiki home directory is not a note")?
+            Err(Error::msg("absolute path that does not point to a file within the wiki home directory is not a note"))?
         };
 
         Ok(PhysicalNote {
             directories: directories_path
                 .parent()
-                .ok_or("note path has no parent")?
+                .ok_or(Error::msg("note path has no parent"))?
                 .iter()
                 .map(|p| p.to_str().map(ToString::to_string))
                 .collect::<Option<Vec<_>>>()
-                .ok_or("note directories are not all valid strings")?,
-            id: path.file_stem().ok_or("could not get file stem of note path")?.to_str().ok_or("os str is not valid str")?.to_string(),
+                .ok_or(Error::msg("note directories are not all valid strings"))?,
+            id: path
+                .file_stem()
+                .ok_or(Error::msg("could not get file stem of note path"))?
+                .to_str()
+                .ok_or(Error::msg("os str is not valid str"))?
+                .to_string(),
         })
     }
 

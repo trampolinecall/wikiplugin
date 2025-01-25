@@ -1,10 +1,8 @@
+use anyhow::Error;
 use markdown::{mdast, to_mdast};
 use yaml_rust::Yaml;
 
-use crate::{
-    error::Error,
-    plugin::{note::Tag, Config},
-};
+use crate::plugin::{note::Tag, Config};
 
 #[derive(Debug)]
 struct MdParseError(markdown::message::Message);
@@ -31,7 +29,7 @@ pub fn find_frontmatter(md: &mdast::Node) -> Result<String, Error> {
         mdast::Node::Yaml(yaml) => Some(yaml.value.clone()),
         _ => None,
     })
-    .ok_or("could not find frontmatter in file")?
+    .ok_or(Error::msg("could not find frontmatter in file"))?
     .1)
 }
 
@@ -43,27 +41,27 @@ pub fn parse_frontmatter(md: &mdast::Node) -> Result<Yaml, Error> {
 pub fn get_title(frontmatter: &Yaml) -> Result<String, Error> {
     Ok(frontmatter
         .as_hash()
-        .ok_or("frontmatter is not hash table at the top level")?
+        .ok_or(Error::msg("frontmatter is not hash table at the top level"))?
         .get(&Yaml::String("title".to_string()))
-        .ok_or("frontmatter has no title field")?
+        .ok_or(Error::msg("frontmatter has no title field"))?
         .as_str()
-        .ok_or("title is not string")?
+        .ok_or(Error::msg("title is not string"))?
         .to_string())
 }
 
 pub fn get_timestamp(frontmatter: &Yaml, config: &Config) -> Result<chrono::NaiveDateTime, Error> {
-    let frontmatter = frontmatter.as_hash().ok_or("frontmatter is not hash table at the top level")?;
+    let frontmatter = frontmatter.as_hash().ok_or(Error::msg("frontmatter is not hash table at the top level"))?;
     let date = frontmatter
         .get(&Yaml::String("date".to_string()))
-        .ok_or("frontmatter has no date field")?
+        .ok_or(Error::msg("frontmatter has no date field"))?
         .as_str()
-        .ok_or("date field is not string")?
+        .ok_or(Error::msg("date field is not string"))?
         .to_string();
     let time = frontmatter.get(&Yaml::String("time".to_string()));
 
     let date = chrono::NaiveDate::parse_from_str(&date, &config.date_format)?;
     let time = match time {
-        Some(time) => chrono::NaiveTime::parse_from_str(time.as_str().ok_or("time field is not string")?, &config.time_format)?,
+        Some(time) => chrono::NaiveTime::parse_from_str(time.as_str().ok_or(Error::msg("time field is not string"))?, &config.time_format)?,
         None => chrono::NaiveTime::MIN,
     };
 
@@ -73,17 +71,17 @@ pub fn get_timestamp(frontmatter: &Yaml, config: &Config) -> Result<chrono::Naiv
 pub fn get_tags(frontmatter: &Yaml) -> Result<Vec<Tag>, Error> {
     let s = frontmatter
         .as_hash()
-        .ok_or("frontmatter is not hash table at the top level")?
+        .ok_or(Error::msg("frontmatter is not hash table at the top level"))?
         .get(&Yaml::String("tags".to_string()))
-        .ok_or("frontmatter has no tags field")?;
+        .ok_or(Error::msg("frontmatter has no tags field"))?;
     match s {
         Yaml::String(s) => Ok(s.split(" ").map(Tag::parse_from_str).collect()),
         Yaml::Array(vec) => Ok(vec
             .iter()
             .map(|tag| Some(Tag::parse_from_str(tag.as_str()?)))
             .collect::<Option<Vec<_>>>()
-            .ok_or("tags field is not array of strings")?),
-        _ => Err("tags field is not string or array".to_string().into()),
+            .ok_or(Error::msg("tags field is not array of strings"))?),
+        _ => Err(Error::msg("tags field is not string or array")),
     }
 }
 
