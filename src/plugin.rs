@@ -480,7 +480,7 @@ impl WikiPlugin {
 
                     return result
                         */
-                    nvim.err_writeln("backlinks autogeneration has not been implemented yet").await?;
+                    nvim.err_writeln("backlinks autogeneration has not been implemented yet").await?; // TODO
                     Some(vec![])
                 }
 
