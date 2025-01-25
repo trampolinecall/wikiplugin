@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-pub fn format_link(config: &Config, current_note: &Note, target_file_path: &Path) -> Result<String, Error> {
+pub fn format_link_path(config: &Config, current_note: &Note, target_file_path: &Path) -> Result<String, Error> {
     match current_note {
         Note::Physical(PhysicalNote { directories: _, id: _ }) => {
             let current_note_path = current_note.path(config).expect("physical note always has path");
@@ -27,7 +27,7 @@ pub fn format_link(config: &Config, current_note: &Note, target_file_path: &Path
     }
 }
 
-pub fn resolve_link(config: &Config, current_note: &Note, link_path_text: &str) -> Result<PathBuf, Error> {
+pub fn resolve_link_path(config: &Config, current_note: &Note, link_path_text: &str) -> Result<PathBuf, Error> {
     let link_path = Path::new(link_path_text);
     match current_note {
         Note::Physical(PhysicalNote { directories: _, id: _ }) => {
@@ -54,61 +54,61 @@ mod tests {
         let current_path = Path::new("/absolute/to/wiki/dir/start.md");
         let target_path = Path::new("/absolute/to/wiki/dir/end.md");
 
-        assert_eq!(format_link(Some(current_path), target_path).unwrap(), "end.md");
+        assert_eq!(format_link_path(Some(current_path), target_path).unwrap(), "end.md");
     }
     #[test] // TODO: this test fails
     fn format_link_rel_abs_test() {
         let current_path = Path::new("start.md"); // we assume that this is relative to the wiki home directory
         let target_path = Path::new("/absolute/to/wiki/dir/end.md");
 
-        assert_eq!(format_link(Some(current_path), target_path).unwrap(), "end.md");
+        assert_eq!(format_link_path(Some(current_path), target_path).unwrap(), "end.md");
     }
     #[test]
     fn format_link_none_abs_test() {
         let target_path = Path::new("/absolute/to/wiki/dir/end.md");
 
-        assert_eq!(format_link(None, target_path).unwrap(), "/absolute/to/wiki/dir/end.md");
+        assert_eq!(format_link_path(None, target_path).unwrap(), "/absolute/to/wiki/dir/end.md");
     }
     #[test] // TODO: this test fails
     fn format_link_abs_rel_test() {
         let current_path = Path::new("/absolute/to/wiki/dir/start.md");
         let target_path = Path::new("end.md");
 
-        assert_eq!(format_link(Some(current_path), target_path).unwrap(), "end.md");
+        assert_eq!(format_link_path(Some(current_path), target_path).unwrap(), "end.md");
     }
     #[test]
     fn format_link_rel_rel_test() {
         let current_path = Path::new("start.md");
         let target_path = Path::new("end.md");
 
-        assert_eq!(format_link(Some(current_path), target_path).unwrap(), "end.md");
+        assert_eq!(format_link_path(Some(current_path), target_path).unwrap(), "end.md");
     }
     #[test]
     fn format_link_none_rel_test() {
         let target_path = Path::new("end.md");
 
         // TODO: decide whether or not this is the intended behavior (should assume that it is relative to wiki dir?)
-        assert_eq!(format_link(None, target_path).unwrap(), "end.md");
+        assert_eq!(format_link_path(None, target_path).unwrap(), "end.md");
     }
     #[test]
     fn format_link_target_more_nested_test() {
         let current_path = Path::new("/absolute/to/wiki/dir/start.md");
         let target_path = Path::new("/absolute/to/wiki/dir/dir2/end.md");
 
-        assert_eq!(format_link(Some(current_path), target_path).unwrap(), "dir2/end.md");
+        assert_eq!(format_link_path(Some(current_path), target_path).unwrap(), "dir2/end.md");
     }
     #[test]
     fn format_link_target_same_directory_test() {
         let current_path = Path::new("/absolute/to/wiki/dir/dir2/start.md");
         let target_path = Path::new("/absolute/to/wiki/dir/dir2/end.md");
 
-        assert_eq!(format_link(Some(current_path), target_path).unwrap(), "end.md");
+        assert_eq!(format_link_path(Some(current_path), target_path).unwrap(), "end.md");
     }
     #[test]
     fn format_link_target_less_nested_test() {
         let current_path = Path::new("/absolute/to/wiki/dir/dir2/start.md");
         let target_path = Path::new("/absolute/to/wiki/dir/end.md");
 
-        assert_eq!(format_link(Some(current_path), target_path).unwrap(), "../end.md");
+        assert_eq!(format_link_path(Some(current_path), target_path).unwrap(), "../end.md");
     }
 }
