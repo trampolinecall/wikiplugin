@@ -28,7 +28,6 @@ pub enum Note {
 pub struct Tag(Vec<String>);
 
 impl PhysicalNote {
-    // TODO: hide this function? replace it with get_current_buf_note?
     pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, Error> {
         let path_abs_canon = if path.is_absolute() { path.canonicalize()? } else { config.home_path.join(path).canonicalize()? };
         let directories_path = if path_abs_canon.starts_with(&config.home_path) {
