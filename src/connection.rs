@@ -1,23 +1,22 @@
-use anyhow::Error;
 use nvim_rs::{compat::tokio::Compat, Neovim};
 
-use crate::plugin::WikiPlugin;
+use crate::{error::Error, plugin::WikiPlugin};
 
 pub async fn make_connection(plugin: WikiPlugin) {
     let (mut nvim, io_handler) = match nvim_rs::create::tokio::new_parent(plugin).await {
         Ok(res) => res,
         Err(e) => {
-            print_error_no_nvim(e.into()).await;
+            print_error_no_nvim(Box::new(e)).await;
             return;
         }
     };
 
     match io_handler.await {
         Err(joinerr) => {
-            print_error_no_nvim(Error::msg(format!("error joining io loop: '{joinerr}'"))).await;
+            print_error_no_nvim(format!("error joining io loop: '{joinerr}'").into()).await;
         }
         Ok(Err(err)) => {
-            print_error(&mut nvim, err.into()).await;
+            print_error(&mut nvim, Box::new(err)).await;
         }
 
         Ok(Ok(())) => {}

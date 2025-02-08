@@ -1,6 +1,7 @@
 use crate::plugin::{Config, WikiPlugin};
 
 mod connection;
+mod error;
 mod plugin;
 
 #[tokio::main]
