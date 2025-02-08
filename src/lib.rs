@@ -3,7 +3,7 @@ use crate::plugin::{Config, WikiPlugin};
 mod connection;
 mod plugin;
 
-#[tokio::main]
+#[nvim_oxi::plugin]
 async fn main() {
     flexi_logger::Logger::try_with_env()
         .expect("could not initialize logger")
