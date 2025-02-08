@@ -5,7 +5,7 @@ use std::{
 
 use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
 
-use crate::{error::Error, plugin::Config};
+use crate::{connection::ConnectionError, plugin::Config};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct PhysicalNote {
@@ -26,24 +26,53 @@ pub enum Note {
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
 pub struct Tag(Vec<String>);
 
+#[derive(Debug)]
+pub enum ParseFromFilepathError {
+    CannotCanonicalize(std::io::Error),
+    FileNotWithinWikiDir,
+    NoFileStem,
+    NoPathParent,
+    OsStringNotValidString,
+}
+impl Display for ParseFromFilepathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseFromFilepathError::CannotCanonicalize(error) => write!(f, "cannot canonicalize path: {error}"),
+            ParseFromFilepathError::FileNotWithinWikiDir => write!(f, "file is not within wiki directory"),
+            ParseFromFilepathError::NoFileStem => write!(f, "file does not have stem"),
+            ParseFromFilepathError::NoPathParent => write!(f, "path does not have parent"),
+            ParseFromFilepathError::OsStringNotValidString => write!(f, "os strings are not valid strings"),
+        }
+    }
+}
+
 impl PhysicalNote {
-    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, Error> {
-        let path_abs_canon = if path.is_absolute() { path.canonicalize()? } else { config.home_path.join(path).canonicalize()? };
+    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, ParseFromFilepathError> {
+        let path_abs_canon = if path.is_absolute() {
+            path.canonicalize().map_err(ParseFromFilepathError::CannotCanonicalize)?
+        } else {
+            config.home_path.join(path).canonicalize().map_err(ParseFromFilepathError::CannotCanonicalize)?
+        };
         let directories_path = if path_abs_canon.starts_with(&config.home_path) {
             path_abs_canon.strip_prefix(&config.home_path).expect("strip_prefix should return Ok if starts_with returns true")
         } else {
-            Err("absolute path that does not point to a file within the wiki home directory is not a note")?
+            Err(ParseFromFilepathError::FileNotWithinWikiDir)?
         };
 
         Ok(PhysicalNote {
             directories: directories_path
                 .parent()
-                .ok_or("note path has no parent")?
+                .ok_or(ParseFromFilepathError::NoPathParent)?
                 .iter()
                 .map(|p| p.to_str().map(ToString::to_string))
                 .collect::<Option<Vec<_>>>()
-                .ok_or("note directories are not all valid strings")?,
-            id: path.file_stem().ok_or("could not get file stem of note path")?.to_str().ok_or("os str is not valid str")?.to_string(),
+                .ok_or(ParseFromFilepathError::OsStringNotValidString)?,
+            id: path
+                .file_stem()
+                .ok_or(ParseFromFilepathError::NoFileStem)?
+                .to_str()
+                .ok_or(ParseFromFilepathError::OsStringNotValidString)?
+                .to_string(),
         })
     }
 
@@ -55,7 +84,8 @@ impl PhysicalNote {
         path
     }
 
-    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
+    // TODO: technically this is not a connection error if it fails to read from disk
+    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, ConnectionError> {
         log::info!("reading contents of file {}", self.path(config).display());
         if let Some(buffer_contents) = self.read_contents_in_nvim(config, nvim).await? {
             Ok(buffer_contents)
@@ -68,7 +98,7 @@ impl PhysicalNote {
         &self,
         config: &Config,
         nvim: &mut Neovim<Compat<tokio::fs::File>>,
-    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
+    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, ConnectionError> {
         let buflist = nvim.list_bufs().await?;
         let mut current_buf = None;
         for buf in buflist {
@@ -78,7 +108,7 @@ impl PhysicalNote {
                 nvim,
                 &format!(r##"expand("#{}:p")"##, buf_number),
                 as_str,
-                "vim function expand( should always return a number"
+                "vim function expand( should always return a string"
             );
             let buf_path = Path::new(buf_path);
             if buf_path == self.path(config) {
@@ -99,7 +129,7 @@ impl PhysicalNote {
         }
     }
     // TODO: this function is duplicated verbatim with Note
-    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
+    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, ConnectionError> {
         match self.get_buffer_in_nvim(config, nvim).await? {
             Some(buf) => Ok(Some(buf.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect())),
             None => Ok(None),
@@ -111,15 +141,18 @@ impl Note {
         Note::Physical(PhysicalNote { directories, id })
     }
 
-    pub async fn get_current_note(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Note, Error> {
+    pub async fn get_current_note(
+        config: &Config,
+        nvim: &mut Neovim<Compat<tokio::fs::File>>,
+    ) -> Result<Result<Note, ParseFromFilepathError>, ConnectionError> {
         let current_buf = nvim.get_current_buf().await?;
         let is_scratch = current_buf.get_option("buftype").await?.as_str().expect("option buftype should be a bool") == "nofile";
         if is_scratch {
-            Ok(Note::Scratch(ScratchNote { buffer: current_buf }))
+            Ok(Ok(Note::Scratch(ScratchNote { buffer: current_buf })))
         } else {
             nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
             let path = Path::new(current_buf_path_str);
-            Ok(Note::Physical(PhysicalNote::parse_from_filepath(config, path)?))
+            Ok(PhysicalNote::parse_from_filepath(config, path).map(Note::Physical))
         }
     }
 
@@ -130,7 +163,7 @@ impl Note {
         }
     }
 
-    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
+    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, ConnectionError> {
         match self {
             Note::Physical(n) => n.read_contents(config, nvim).await,
             Note::Scratch(ScratchNote { buffer }) => Ok(buffer.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect()),
@@ -141,13 +174,13 @@ impl Note {
         &self,
         config: &Config,
         nvim: &mut Neovim<Compat<tokio::fs::File>>,
-    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
+    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, ConnectionError> {
         match self {
             Note::Physical(n) => n.get_buffer_in_nvim(config, nvim).await,
             Note::Scratch(ScratchNote { buffer }) => Ok(Some(buffer.clone())),
         }
     }
-    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
+    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, ConnectionError> {
         match self.get_buffer_in_nvim(config, nvim).await? {
             Some(buf) => Ok(Some(buf.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect())),
             None => Ok(None),

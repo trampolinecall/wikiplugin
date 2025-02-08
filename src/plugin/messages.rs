@@ -1,9 +1,38 @@
+#[derive(Debug)]
+pub enum MessageParseError {
+    WrongArgumentType { argument_name: &'static str, message_name: &'static str, expected_type: String, actual_value: nvim_rs::Value },
+    UnknownMessage { message_enum_name: &'static str, message: String, args: Vec<nvim_rs::Value> },
+}
+
+impl std::fmt::Display for MessageParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MessageParseError::WrongArgumentType { argument_name, message_name, expected_type, actual_value } => {
+                write!(
+                    f,
+                    "actual argument {:?} to argument '{}' message '{}' is not of expected type '{}'",
+                    actual_value, argument_name, message_name, expected_type
+                )
+            }
+            MessageParseError::UnknownMessage { message_enum_name, message, args } => {
+                write!(f, "invalid message '{}' with args {:?} for message type {}", message, args, message_enum_name)
+            }
+        }
+    }
+}
+impl std::error::Error for MessageParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        todo!()
+    }
+}
+
 trait FromNvimValue: Sized {
-    fn from(message_name: &str, argument_name: &str, v: &nvim_rs::Value) -> Result<Self, String> {
-        let converted = Self::convert(v);
-        match converted {
+    fn from(message_name: &'static str, argument_name: &'static str, v: nvim_rs::Value) -> Result<Self, MessageParseError> {
+        match Self::convert(&v) {
             Some(converted) => Ok(converted),
-            None => Err(format!("argument '{argument_name}' of message '{message_name}' is not {}", Self::type_description())),
+            None => {
+                Err(MessageParseError::WrongArgumentType { argument_name, message_name, expected_type: Self::type_description(), actual_value: v })
+            }
         }
     }
     fn convert(v: &nvim_rs::Value) -> Option<Self>;
@@ -55,7 +84,7 @@ macro_rules! messages {
             $(
                 $message_name_pascal { $($field_name: $field_ty),* },
             )+
-            Invalid(String),
+            Invalid($crate::plugin::messages::MessageParseError),
         }
 
         impl $message_enum_name {
@@ -65,15 +94,15 @@ macro_rules! messages {
                     $(
                         stringify!($message_name_snake) => {
                             #[allow(unused_mut, unused_variables)]
-                            let mut arg_iter = args.iter().chain(std::iter::repeat(&nvim_rs::Value::Nil));
+                            let mut arg_iter = args.into_iter().chain(std::iter::repeat(nvim_rs::Value::Nil));
 
                             #[allow(clippy::redundant_closure_call)]
                             let result = (|| {
                                 $(
-                                    let $field_name = <$field_ty as FromNvimValue>::from(&message, stringify!($field_name), &arg_iter.next().expect("infinite iterator should always have next value"))?;
+                                    let $field_name = <$field_ty as FromNvimValue>::from(stringify!($message_name_snake), stringify!($field_name), arg_iter.next().expect("infinite iterator should always have next value"))?;
                                 )*
 
-                                Ok::<_, String>($message_enum_name::$message_name_pascal { $( $field_name ),* })
+                                Ok::<_, $crate::plugin::messages::MessageParseError>($message_enum_name::$message_name_pascal { $( $field_name ),* })
                             })();
 
                             match result {
@@ -82,7 +111,7 @@ macro_rules! messages {
                             }
                         }
                     )+
-                    _ => $message_enum_name::Invalid(format!("unknown message '{message}' with params {args:?}")),
+                    _ => $message_enum_name::Invalid($crate::plugin::messages::MessageParseError::UnknownMessage { message_enum_name: stringify!($message_enum_name), message, args }),
                 }
             }
         }
