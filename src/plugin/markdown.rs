@@ -20,27 +20,10 @@ impl std::fmt::Display for NoFrontmatter {
     }
 }
 
-#[derive(Debug)]
-pub enum InvalidFrontmatter {
-    NoFrontmatter,
-    YamlScanError(yaml_rust::ScanError),
-}
-impl std::fmt::Display for InvalidFrontmatter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            InvalidFrontmatter::NoFrontmatter => NoFrontmatter.fmt(f),
-            InvalidFrontmatter::YamlScanError(scan_error) => scan_error.fmt(f),
-        }
-    }
-}
-impl From<NoFrontmatter> for InvalidFrontmatter {
-    fn from(NoFrontmatter: NoFrontmatter) -> Self {
-        InvalidFrontmatter::NoFrontmatter
-    }
-}
-impl From<yaml_rust::ScanError> for InvalidFrontmatter {
-    fn from(v: yaml_rust::ScanError) -> Self {
-        Self::YamlScanError(v)
+error_union! {
+    pub enum InvalidFrontmatter {
+        NoFrontmatter(NoFrontmatter),
+        YamlScanError(yaml_rust::ScanError),
     }
 }
 

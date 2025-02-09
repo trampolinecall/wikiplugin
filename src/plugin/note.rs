@@ -46,51 +46,17 @@ impl Display for ParseFromFilepathError {
     }
 }
 
-#[derive(Debug)]
-pub enum ReadContentsError {
-    Io(std::io::Error),
-    NvimApi(api::Error),
-}
-impl Display for ReadContentsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReadContentsError::Io(e) => e.fmt(f),
-            ReadContentsError::NvimApi(e) => e.fmt(f),
-        }
-    }
-}
-impl From<api::Error> for ReadContentsError {
-    fn from(v: api::Error) -> Self {
-        Self::NvimApi(v)
-    }
-}
-impl From<std::io::Error> for ReadContentsError {
-    fn from(v: std::io::Error) -> Self {
-        Self::Io(v)
+error_union! {
+    pub enum ReadContentsError {
+        Io(std::io::Error),
+        NvimApi(api::Error),
     }
 }
 
-#[derive(Debug)]
-pub enum GetCurrentNoteError {
-    NvimApi(api::Error),
-    ParseFromFilepathError(ParseFromFilepathError),
-}
-impl Display for GetCurrentNoteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GetCurrentNoteError::NvimApi(e) => e.fmt(f),
-            GetCurrentNoteError::ParseFromFilepathError(e) => e.fmt(f),
-        }
-    }
-}
-impl From<api::Error> for GetCurrentNoteError {
-    fn from(v: api::Error) -> Self {
-        Self::NvimApi(v)
-    }
-}
-impl From<ParseFromFilepathError> for GetCurrentNoteError {
-    fn from(v: ParseFromFilepathError) -> Self {
-        Self::ParseFromFilepathError(v)
+error_union! {
+    pub enum GetCurrentNoteError {
+        NvimApi(api::Error),
+        ParseFromFilepathError(ParseFromFilepathError),
     }
 }
 
