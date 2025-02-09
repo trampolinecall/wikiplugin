@@ -2,6 +2,7 @@ use nvim_oxi::{Dictionary, Function, Object};
 
 use crate::plugin::{note::Note, Config};
 
+#[macro_use]
 mod error;
 mod plugin;
 

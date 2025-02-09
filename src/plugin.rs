@@ -13,26 +13,28 @@ mod markdown;
 pub mod note;
 
 #[derive(Debug)]
-pub enum ConfigParseError {
-    ConversionError(nvim_oxi::conversion::Error),
-    ConfigDictMissingKey(&'static str),
-    HomePathNotAbsolute,
-}
-impl std::fmt::Display for ConfigParseError {
+pub struct ConfigDictMissingKey(&'static str);
+impl std::error::Error for ConfigDictMissingKey {}
+impl std::fmt::Display for ConfigDictMissingKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigParseError::ConversionError(e) => e.fmt(f),
-            ConfigParseError::ConfigDictMissingKey(k) => write!(f, "config dict is missing key {}", k),
-            ConfigParseError::HomePathNotAbsolute => write!(f, "home path should be absolute"),
-        }
+        write!(f, "config dict is missing key {}", self.0)
     }
 }
-impl From<nvim_oxi::conversion::Error> for ConfigParseError {
-    fn from(v: nvim_oxi::conversion::Error) -> Self {
-        Self::ConversionError(v)
+#[derive(Debug)]
+pub struct HomePathNotAbsolute;
+impl std::error::Error for HomePathNotAbsolute {}
+impl std::fmt::Display for HomePathNotAbsolute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "home path should be absolute")
     }
 }
-impl std::error::Error for ConfigParseError {}
+error_union! {
+    pub enum ConfigParseError {
+        ConversionError(nvim_oxi::conversion::Error),
+        ConfigDictMissingKey(ConfigDictMissingKey),
+        HomePathNotAbsolute(HomePathNotAbsolute),
+    }
+}
 
 #[derive(Clone, serde_derive::Deserialize)]
 pub struct Config {
@@ -44,11 +46,11 @@ pub struct Config {
 impl Config {
     pub fn parse_from_dict(dict: Dictionary) -> Result<Config, ConfigParseError> {
         fn get_from_dict<T: nvim_oxi::conversion::FromObject>(dict: &Dictionary, key: &'static str) -> Result<T, ConfigParseError> {
-            Ok(T::from_object(dict.get(key).ok_or(ConfigParseError::ConfigDictMissingKey(key))?.clone())?)
+            Ok(T::from_object(dict.get(key).ok_or(ConfigDictMissingKey(key))?.clone())?)
         }
         let home_path: PathBuf = get_from_dict::<String>(&dict, "home_path")?.into();
         if !home_path.is_absolute() {
-            Err(ConfigParseError::HomePathNotAbsolute)?;
+            Err(HomePathNotAbsolute)?;
         }
         let c = Config {
             home_path,
@@ -61,213 +63,79 @@ impl Config {
 }
 
 #[derive(Debug)]
-pub enum ApiErrorOrNonUtf8Path {
-    ApiError(api::Error),
-    NonUtf8Path,
-}
-impl std::fmt::Display for ApiErrorOrNonUtf8Path {
+pub struct NonUtf8Path;
+impl std::error::Error for NonUtf8Path {}
+impl std::fmt::Display for NonUtf8Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ApiErrorOrNonUtf8Path::ApiError(e) => e.fmt(f),
-            ApiErrorOrNonUtf8Path::NonUtf8Path => write!(f, "path is not utf8"),
-        }
+        write!(f, "path is not utf8")
     }
 }
-impl std::error::Error for ApiErrorOrNonUtf8Path {}
-impl From<api::Error> for ApiErrorOrNonUtf8Path {
-    fn from(v: api::Error) -> Self {
-        Self::ApiError(v)
+error_union! {
+    pub enum ApiErrorOrNonUtf8Path {
+        ApiError(api::Error),
+        NonUtf8Path(NonUtf8Path),
     }
 }
 
 #[derive(Debug)]
-pub enum InsertLinkError {
-    ParseFromFilepathError(note::ParseFromFilepathError),
-    GetCurrentNoteError(note::GetCurrentNoteError),
-    ReadContentsError(note::ReadContentsError),
-    FormatLinkPathError(links::FormatLinkPathError),
-    ApiError(api::Error),
-    NonUtf8Path,
-    ParseMarkdownError(markdown::MdParseError), // TODO: remove these? if the frontmatter or title is incorrect just put nothing
-    InvalidFrontmatter(markdown::InvalidFrontmatter),
-    GetTitleError(markdown::GetFrontmatterFieldError),
-    CannotLinkToScratchNote,
-}
-impl std::error::Error for InsertLinkError {}
-impl std::fmt::Display for InsertLinkError {
+pub struct CannotLinkToScratchNote;
+impl std::error::Error for CannotLinkToScratchNote {}
+impl std::fmt::Display for CannotLinkToScratchNote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            InsertLinkError::ParseFromFilepathError(e) => e.fmt(f),
-            InsertLinkError::ApiError(e) => e.fmt(f),
-            InsertLinkError::NonUtf8Path => write!(f, "path is not valid utf 8"),
-            InsertLinkError::FormatLinkPathError(e) => e.fmt(f),
-            InsertLinkError::GetTitleError(e) => e.fmt(f),
-            InsertLinkError::ParseMarkdownError(e) => e.fmt(f),
-            InsertLinkError::InvalidFrontmatter(e) => e.fmt(f),
-            InsertLinkError::CannotLinkToScratchNote => write!(f, "cannot link to scratch note"),
-            InsertLinkError::GetCurrentNoteError(e) => e.fmt(f),
-            InsertLinkError::ReadContentsError(e) => e.fmt(f),
-        }
+        write!(f, "cannot link to scratch note")
     }
 }
-impl From<note::ReadContentsError> for InsertLinkError {
-    fn from(v: note::ReadContentsError) -> Self {
-        Self::ReadContentsError(v)
+error_union! {
+    pub enum InsertLinkError {
+        ParseFromFilepathError(note::ParseFromFilepathError),
+        GetCurrentNoteError(note::GetCurrentNoteError),
+        ReadContentsError(note::ReadContentsError),
+        FormatLinkPathError(links::FormatLinkPathError),
+        ApiError(api::Error),
+        NonUtf8Path(NonUtf8Path),
+        ParseMarkdownError(markdown::MdParseError), // TODO: remove these? if the frontmatter or title is incorrect just put nothing
+        InvalidFrontmatter(markdown::InvalidFrontmatter),
+        GetTitleError(markdown::GetFrontmatterFieldError),
+        CannotLinkToScratchNote(CannotLinkToScratchNote),
     }
 }
-impl From<note::GetCurrentNoteError> for InsertLinkError {
-    fn from(v: note::GetCurrentNoteError) -> Self {
-        Self::GetCurrentNoteError(v)
+convert_error_union! {
+    ApiErrorOrNonUtf8Path => InsertLinkError {
+        ApiError => ApiError,
+        NonUtf8Path => NonUtf8Path
     }
 }
-impl From<markdown::InvalidFrontmatter> for InsertLinkError {
-    fn from(v: markdown::InvalidFrontmatter) -> Self {
-        Self::InvalidFrontmatter(v)
-    }
-}
-impl From<markdown::GetFrontmatterFieldError> for InsertLinkError {
-    fn from(v: markdown::GetFrontmatterFieldError) -> Self {
-        Self::GetTitleError(v)
-    }
-}
-impl From<markdown::MdParseError> for InsertLinkError {
-    fn from(v: markdown::MdParseError) -> Self {
-        Self::ParseMarkdownError(v)
-    }
-}
-impl From<links::FormatLinkPathError> for InsertLinkError {
-    fn from(v: links::FormatLinkPathError) -> Self {
-        Self::FormatLinkPathError(v)
-    }
-}
-impl From<api::Error> for InsertLinkError {
-    fn from(v: api::Error) -> Self {
-        Self::ApiError(v)
-    }
-}
-impl From<ApiErrorOrNonUtf8Path> for InsertLinkError {
-    fn from(v: ApiErrorOrNonUtf8Path) -> Self {
-        match v {
-            ApiErrorOrNonUtf8Path::ApiError(connection_error) => InsertLinkError::ApiError(connection_error),
-            ApiErrorOrNonUtf8Path::NonUtf8Path => InsertLinkError::NonUtf8Path,
-        }
-    }
-}
-impl From<note::ParseFromFilepathError> for InsertLinkError {
-    fn from(v: note::ParseFromFilepathError) -> Self {
-        Self::ParseFromFilepathError(v)
+
+error_union! {
+    pub enum TagIndexError {
+        ListAllPhysicalNotesError(ListAllPhysicalNotesError),
+        ReadContentsError(note::ReadContentsError),
+        GetCurrentNoteError(note::GetCurrentNoteError),
+        ApiError(api::Error),
+        NonUtf8Path(NonUtf8Path),
+        ParseMarkdownError(markdown::MdParseError), // TODO: remove these? if the frontmatter or title is incorrect just put nothing
+        InvalidFrontmatter(markdown::InvalidFrontmatter),
     }
 }
 
 #[derive(Debug)]
-pub enum TagIndexError {
-    ListAllPhysicalNotesError(ListAllPhysicalNotesError),
-    ReadContentsError(note::ReadContentsError),
-    GetCurrentNoteError(note::GetCurrentNoteError),
-    ApiError(api::Error),
-    NonUtf8Path,
-    ParseMarkdownError(markdown::MdParseError), // TODO: remove these? if the frontmatter or title is incorrect just put nothing
-    InvalidFrontmatter(markdown::InvalidFrontmatter),
-}
-impl std::error::Error for TagIndexError {}
-impl std::fmt::Display for TagIndexError {
+pub struct NotOnALink;
+impl std::error::Error for NotOnALink {}
+impl std::fmt::Display for NotOnALink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TagIndexError::ListAllPhysicalNotesError(e) => e.fmt(f),
-            TagIndexError::ApiError(e) => e.fmt(f),
-            TagIndexError::NonUtf8Path => write!(f, "path is not valid utf 8"),
-            TagIndexError::ParseMarkdownError(e) => e.fmt(f),
-            TagIndexError::InvalidFrontmatter(e) => e.fmt(f),
-            TagIndexError::GetCurrentNoteError(e) => e.fmt(f),
-            TagIndexError::ReadContentsError(e) => e.fmt(f),
-        }
+        write!(f, "not on a link")
     }
 }
-impl From<note::ReadContentsError> for TagIndexError {
-    fn from(v: note::ReadContentsError) -> Self {
-        Self::ReadContentsError(v)
-    }
-}
-impl From<note::GetCurrentNoteError> for TagIndexError {
-    fn from(v: note::GetCurrentNoteError) -> Self {
-        Self::GetCurrentNoteError(v)
-    }
-}
-impl From<ListAllPhysicalNotesError> for TagIndexError {
-    fn from(v: ListAllPhysicalNotesError) -> Self {
-        Self::ListAllPhysicalNotesError(v)
-    }
-}
-impl From<markdown::InvalidFrontmatter> for TagIndexError {
-    fn from(v: markdown::InvalidFrontmatter) -> Self {
-        Self::InvalidFrontmatter(v)
-    }
-}
-impl From<markdown::MdParseError> for TagIndexError {
-    fn from(v: markdown::MdParseError) -> Self {
-        Self::ParseMarkdownError(v)
-    }
-}
-impl From<api::Error> for TagIndexError {
-    fn from(v: api::Error) -> Self {
-        Self::ApiError(v)
-    }
-}
-
-#[derive(Debug)]
-pub enum FollowLinkError {
-    ApiError(api::Error),
-    GetCurrentNoteError(note::GetCurrentNoteError),
-    ReadContentsError(note::ReadContentsError),
-    ParseFromFilepathError(note::ParseFromFilepathError),
-    ParseMarkdownError(markdown::MdParseError),
-    NotOnALink,
-    ResolveLinkPathError(links::ResolveLinkPathError),
-    NonUtf8Path,
-}
-impl std::error::Error for FollowLinkError {}
-impl std::fmt::Display for FollowLinkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FollowLinkError::ApiError(e) => e.fmt(f),
-            FollowLinkError::ParseFromFilepathError(e) => e.fmt(f),
-            FollowLinkError::ParseMarkdownError(e) => e.fmt(f),
-            FollowLinkError::NotOnALink => write!(f, "not on a link"),
-            FollowLinkError::ResolveLinkPathError(e) => e.fmt(f),
-            FollowLinkError::NonUtf8Path => write!(f, "path is not valid utf8"),
-            FollowLinkError::GetCurrentNoteError(e) => e.fmt(f),
-            FollowLinkError::ReadContentsError(e) => e.fmt(f),
-        }
-    }
-}
-impl From<note::ReadContentsError> for FollowLinkError {
-    fn from(v: note::ReadContentsError) -> Self {
-        Self::ReadContentsError(v)
-    }
-}
-impl From<note::GetCurrentNoteError> for FollowLinkError {
-    fn from(v: note::GetCurrentNoteError) -> Self {
-        Self::GetCurrentNoteError(v)
-    }
-}
-impl From<links::ResolveLinkPathError> for FollowLinkError {
-    fn from(v: links::ResolveLinkPathError) -> Self {
-        Self::ResolveLinkPathError(v)
-    }
-}
-impl From<markdown::MdParseError> for FollowLinkError {
-    fn from(v: markdown::MdParseError) -> Self {
-        Self::ParseMarkdownError(v)
-    }
-}
-impl From<note::ParseFromFilepathError> for FollowLinkError {
-    fn from(v: note::ParseFromFilepathError) -> Self {
-        Self::ParseFromFilepathError(v)
-    }
-}
-impl From<api::Error> for FollowLinkError {
-    fn from(v: api::Error) -> Self {
-        Self::ApiError(v)
+error_union! {
+    pub enum FollowLinkError {
+        ApiError(api::Error),
+        GetCurrentNoteError(note::GetCurrentNoteError),
+        ReadContentsError(note::ReadContentsError),
+        ParseFromFilepathError(note::ParseFromFilepathError),
+        ParseMarkdownError(markdown::MdParseError),
+        NotOnALink(NotOnALink),
+        ResolveLinkPathError(links::ResolveLinkPathError),
+        NonUtf8Path(NonUtf8Path),
     }
 }
 
@@ -438,7 +306,7 @@ pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Resul
     .to_vec();
 
     let mut buf = api::create_buf(true, false)?;
-    buf.set_name(buf_path.to_str().ok_or(ApiErrorOrNonUtf8Path::NonUtf8Path)?)?;
+    buf.set_name(buf_path.to_str().ok_or(NonUtf8Path)?)?;
     buf.set_lines(0..0, true, buf_contents)?;
     buf.set_option("filetype", "wikipluginnote")?;
 
@@ -451,7 +319,7 @@ pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Resul
 
 pub fn open_index(config: &Config) -> Result<(), ApiErrorOrNonUtf8Path> {
     let index_path = config.home_path.join("index.md");
-    let index_path: &str = index_path.to_str().ok_or(ApiErrorOrNonUtf8Path::NonUtf8Path)?;
+    let index_path: &str = index_path.to_str().ok_or(NonUtf8Path)?;
     api::cmd(&api::types::CmdInfos::builder().cmd("edit").args([index_path]).build(), &api::opts::CmdOpts::default())?;
 
     Ok(())
@@ -503,7 +371,7 @@ pub fn insert_link_at_cursor(config: &Config, link_to: &Note, link_text: Option<
 
             Ok(())
         }
-        Note::Scratch(_) => Err(InsertLinkError::CannotLinkToScratchNote)?,
+        Note::Scratch(_) => Err(CannotLinkToScratchNote)?,
     }
 }
 
@@ -531,7 +399,7 @@ pub fn open_tag_index(config: &Config) -> Result<(), TagIndexError> {
     for tag in tag_list {
         lines.extend([format!("# {}", tag), "".to_string()]);
         for (_, note_title, note_path) in &tag_table[&tag] {
-            lines.extend([format!("- [{}]({})", note_title, note_path.to_str().ok_or(TagIndexError::NonUtf8Path)?)]);
+            lines.extend([format!("- [{}]({})", note_title, note_path.to_str().ok_or(NonUtf8Path)?)]);
         }
         lines.extend(["".to_string()]);
     }
@@ -557,12 +425,12 @@ pub fn follow_link(config: &Config) -> Result<(), FollowLinkError> {
         }
         _ => None,
     })
-    .ok_or(FollowLinkError::NotOnALink)?;
+    .ok_or(NotOnALink)?;
 
     let new_note_path = links::resolve_link_path(config, &current_note, &link_path)?;
 
     api::cmd(
-        &api::types::CmdInfos::builder().cmd("edit").args([new_note_path.to_str().ok_or(FollowLinkError::NonUtf8Path)?]).build(),
+        &api::types::CmdInfos::builder().cmd("edit").args([new_note_path.to_str().ok_or(NonUtf8Path)?]).build(),
         &api::opts::CmdOpts::default(),
     )?;
 
