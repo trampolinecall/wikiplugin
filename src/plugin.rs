@@ -12,7 +12,7 @@ mod links;
 mod markdown;
 pub mod note;
 
-#[derive(Clone, serde_derive::Deserialize)]
+#[derive(Clone)]
 pub struct Config {
     home_path: PathBuf,
     note_id_timestamp_format: String,
