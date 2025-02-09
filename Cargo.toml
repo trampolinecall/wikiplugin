@@ -15,7 +15,6 @@ log = "0.4.22"
 markdown = "=1.0.0-alpha.21"
 nvim-oxi = { version = "0.5.1", features = ["neovim-0-9", "neovim-0-10"] }
 pathdiff = "0.2.1"
-regex = "1.11.1"
 serde = "1.0.217"
 serde_derive = "1.0.217"
 yaml-rust = "0.4.5"

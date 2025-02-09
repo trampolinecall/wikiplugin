@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::Error;
 use nvim_oxi::{api, conversion::FromObject, Dictionary};
-use regex::Regex;
 
 use crate::plugin::note::{Note, PhysicalNote, Tag};
 
