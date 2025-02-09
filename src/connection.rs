@@ -1,8 +1,9 @@
-use anyhow::Error;
 use nvim_oxi::api;
 
+use std::error::Error;
+
 // TODO: move this function to an error module
-pub fn print_error(err: Error) {
+pub fn print_error(err: &dyn Error) {
     let mut err_str = format!("error: {err}\n");
 
     let mut source = err.source();

@@ -70,9 +70,12 @@ fn wikiplugin_internal() -> Dictionary {
 }
 
 // TODO: move this somewhere else
-fn do_function(config: Dictionary, r: impl FnOnce(Config) -> Result<(), anyhow::Error>) {
-    match Config::parse_from_dict(config).and_then(r) {
-        Ok(()) => (),
-        Err(e) => connection::print_error(e),
+fn do_function<E: std::error::Error>(config: Dictionary, r: impl FnOnce(Config) -> Result<(), E>) {
+    match Config::parse_from_dict(config) {
+        Ok(config) => match r(config) {
+            Ok(()) => (),
+            Err(e) => connection::print_error(&e as &dyn std::error::Error),
+        },
+        Err(e) => connection::print_error(&e as &dyn std::error::Error),
     }
 }

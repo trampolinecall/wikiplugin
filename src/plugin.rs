@@ -3,8 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Error;
-use nvim_oxi::{api, conversion::FromObject, Dictionary};
+use nvim_oxi::{api, Dictionary};
 use regex::Regex;
 
 use crate::plugin::note::{Note, PhysicalNote, Tag};
@@ -12,6 +11,28 @@ use crate::plugin::note::{Note, PhysicalNote, Tag};
 mod links;
 mod markdown;
 pub mod note;
+
+#[derive(Debug)]
+pub enum ConfigParseError {
+    ConversionError(nvim_oxi::conversion::Error),
+    ConfigDictMissingKey(&'static str),
+    HomePathNotAbsolute,
+}
+impl std::fmt::Display for ConfigParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigParseError::ConversionError(e) => e.fmt(f),
+            ConfigParseError::ConfigDictMissingKey(k) => write!(f, "config dict is missing key {}", k),
+            ConfigParseError::HomePathNotAbsolute => write!(f, "home path should be absolute"),
+        }
+    }
+}
+impl From<nvim_oxi::conversion::Error> for ConfigParseError {
+    fn from(v: nvim_oxi::conversion::Error) -> Self {
+        Self::ConversionError(v)
+    }
+}
+impl std::error::Error for ConfigParseError {}
 
 #[derive(Clone, serde_derive::Deserialize)]
 pub struct Config {
@@ -21,13 +42,13 @@ pub struct Config {
     time_format: String,
 }
 impl Config {
-    pub fn parse_from_dict(dict: Dictionary) -> Result<Config, anyhow::Error> {
-        fn get_from_dict<T: nvim_oxi::conversion::FromObject>(dict: &Dictionary, key: &'static str) -> Result<T, anyhow::Error> {
-            Ok(T::from_object(dict.get(key).ok_or(anyhow::anyhow!("config dict is missing key {}", key))?.clone())?)
+    pub fn parse_from_dict(dict: Dictionary) -> Result<Config, ConfigParseError> {
+        fn get_from_dict<T: nvim_oxi::conversion::FromObject>(dict: &Dictionary, key: &'static str) -> Result<T, ConfigParseError> {
+            Ok(T::from_object(dict.get(key).ok_or(ConfigParseError::ConfigDictMissingKey(key))?.clone())?)
         }
         let home_path: PathBuf = get_from_dict::<String>(&dict, "home_path")?.into();
         if !home_path.is_absolute() {
-            Err(anyhow::anyhow!("home path should be absolute"))?;
+            Err(ConfigParseError::HomePathNotAbsolute)?;
         }
         let c = Config {
             home_path,
@@ -39,7 +60,359 @@ impl Config {
     }
 }
 
-pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Result<Note, Error> {
+#[derive(Debug)]
+pub enum ApiErrorOrNonUtf8Path {
+    ApiError(api::Error),
+    NonUtf8Path,
+}
+impl std::fmt::Display for ApiErrorOrNonUtf8Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApiErrorOrNonUtf8Path::ApiError(e) => e.fmt(f),
+            ApiErrorOrNonUtf8Path::NonUtf8Path => write!(f, "path is not utf8"),
+        }
+    }
+}
+impl std::error::Error for ApiErrorOrNonUtf8Path {}
+impl From<api::Error> for ApiErrorOrNonUtf8Path {
+    fn from(v: api::Error) -> Self {
+        Self::ApiError(v)
+    }
+}
+
+#[derive(Debug)]
+pub enum InsertLinkError {
+    ParseFromFilepathError(note::ParseFromFilepathError),
+    GetCurrentNoteError(note::GetCurrentNoteError),
+    ReadContentsError(note::ReadContentsError),
+    FormatLinkPathError(links::FormatLinkPathError),
+    ApiError(api::Error),
+    NonUtf8Path,
+    ParseMarkdownError(markdown::MdParseError), // TODO: remove these? if the frontmatter or title is incorrect just put nothing
+    InvalidFrontmatter(markdown::InvalidFrontmatter),
+    GetTitleError(markdown::GetFrontmatterFieldError),
+    CannotLinkToScratchNote,
+}
+impl std::error::Error for InsertLinkError {}
+impl std::fmt::Display for InsertLinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InsertLinkError::ParseFromFilepathError(e) => e.fmt(f),
+            InsertLinkError::ApiError(e) => e.fmt(f),
+            InsertLinkError::NonUtf8Path => write!(f, "path is not valid utf 8"),
+            InsertLinkError::FormatLinkPathError(e) => e.fmt(f),
+            InsertLinkError::GetTitleError(e) => e.fmt(f),
+            InsertLinkError::ParseMarkdownError(e) => e.fmt(f),
+            InsertLinkError::InvalidFrontmatter(e) => e.fmt(f),
+            InsertLinkError::CannotLinkToScratchNote => write!(f, "cannot link to scratch note"),
+            InsertLinkError::GetCurrentNoteError(e) => e.fmt(f),
+            InsertLinkError::ReadContentsError(e) => e.fmt(f),
+        }
+    }
+}
+impl From<note::ReadContentsError> for InsertLinkError {
+    fn from(v: note::ReadContentsError) -> Self {
+        Self::ReadContentsError(v)
+    }
+}
+impl From<note::GetCurrentNoteError> for InsertLinkError {
+    fn from(v: note::GetCurrentNoteError) -> Self {
+        Self::GetCurrentNoteError(v)
+    }
+}
+impl From<markdown::InvalidFrontmatter> for InsertLinkError {
+    fn from(v: markdown::InvalidFrontmatter) -> Self {
+        Self::InvalidFrontmatter(v)
+    }
+}
+impl From<markdown::GetFrontmatterFieldError> for InsertLinkError {
+    fn from(v: markdown::GetFrontmatterFieldError) -> Self {
+        Self::GetTitleError(v)
+    }
+}
+impl From<markdown::MdParseError> for InsertLinkError {
+    fn from(v: markdown::MdParseError) -> Self {
+        Self::ParseMarkdownError(v)
+    }
+}
+impl From<links::FormatLinkPathError> for InsertLinkError {
+    fn from(v: links::FormatLinkPathError) -> Self {
+        Self::FormatLinkPathError(v)
+    }
+}
+impl From<api::Error> for InsertLinkError {
+    fn from(v: api::Error) -> Self {
+        Self::ApiError(v)
+    }
+}
+impl From<ApiErrorOrNonUtf8Path> for InsertLinkError {
+    fn from(v: ApiErrorOrNonUtf8Path) -> Self {
+        match v {
+            ApiErrorOrNonUtf8Path::ApiError(connection_error) => InsertLinkError::ApiError(connection_error),
+            ApiErrorOrNonUtf8Path::NonUtf8Path => InsertLinkError::NonUtf8Path,
+        }
+    }
+}
+impl From<note::ParseFromFilepathError> for InsertLinkError {
+    fn from(v: note::ParseFromFilepathError) -> Self {
+        Self::ParseFromFilepathError(v)
+    }
+}
+
+#[derive(Debug)]
+pub enum TagIndexError {
+    ListAllPhysicalNotesError(ListAllPhysicalNotesError),
+    ReadContentsError(note::ReadContentsError),
+    GetCurrentNoteError(note::GetCurrentNoteError),
+    ApiError(api::Error),
+    NonUtf8Path,
+    ParseMarkdownError(markdown::MdParseError), // TODO: remove these? if the frontmatter or title is incorrect just put nothing
+    InvalidFrontmatter(markdown::InvalidFrontmatter),
+}
+impl std::error::Error for TagIndexError {}
+impl std::fmt::Display for TagIndexError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TagIndexError::ListAllPhysicalNotesError(e) => e.fmt(f),
+            TagIndexError::ApiError(e) => e.fmt(f),
+            TagIndexError::NonUtf8Path => write!(f, "path is not valid utf 8"),
+            TagIndexError::ParseMarkdownError(e) => e.fmt(f),
+            TagIndexError::InvalidFrontmatter(e) => e.fmt(f),
+            TagIndexError::GetCurrentNoteError(e) => e.fmt(f),
+            TagIndexError::ReadContentsError(e) => e.fmt(f),
+        }
+    }
+}
+impl From<note::ReadContentsError> for TagIndexError {
+    fn from(v: note::ReadContentsError) -> Self {
+        Self::ReadContentsError(v)
+    }
+}
+impl From<note::GetCurrentNoteError> for TagIndexError {
+    fn from(v: note::GetCurrentNoteError) -> Self {
+        Self::GetCurrentNoteError(v)
+    }
+}
+impl From<ListAllPhysicalNotesError> for TagIndexError {
+    fn from(v: ListAllPhysicalNotesError) -> Self {
+        Self::ListAllPhysicalNotesError(v)
+    }
+}
+impl From<markdown::InvalidFrontmatter> for TagIndexError {
+    fn from(v: markdown::InvalidFrontmatter) -> Self {
+        Self::InvalidFrontmatter(v)
+    }
+}
+impl From<markdown::MdParseError> for TagIndexError {
+    fn from(v: markdown::MdParseError) -> Self {
+        Self::ParseMarkdownError(v)
+    }
+}
+impl From<api::Error> for TagIndexError {
+    fn from(v: api::Error) -> Self {
+        Self::ApiError(v)
+    }
+}
+
+#[derive(Debug)]
+pub enum FollowLinkError {
+    ApiError(api::Error),
+    GetCurrentNoteError(note::GetCurrentNoteError),
+    ReadContentsError(note::ReadContentsError),
+    ParseFromFilepathError(note::ParseFromFilepathError),
+    ParseMarkdownError(markdown::MdParseError),
+    NotOnALink,
+    ResolveLinkPathError(links::ResolveLinkPathError),
+    NonUtf8Path,
+}
+impl std::error::Error for FollowLinkError {}
+impl std::fmt::Display for FollowLinkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FollowLinkError::ApiError(e) => e.fmt(f),
+            FollowLinkError::ParseFromFilepathError(e) => e.fmt(f),
+            FollowLinkError::ParseMarkdownError(e) => e.fmt(f),
+            FollowLinkError::NotOnALink => write!(f, "not on a link"),
+            FollowLinkError::ResolveLinkPathError(e) => e.fmt(f),
+            FollowLinkError::NonUtf8Path => write!(f, "path is not valid utf8"),
+            FollowLinkError::GetCurrentNoteError(e) => e.fmt(f),
+            FollowLinkError::ReadContentsError(e) => e.fmt(f),
+        }
+    }
+}
+impl From<note::ReadContentsError> for FollowLinkError {
+    fn from(v: note::ReadContentsError) -> Self {
+        Self::ReadContentsError(v)
+    }
+}
+impl From<note::GetCurrentNoteError> for FollowLinkError {
+    fn from(v: note::GetCurrentNoteError) -> Self {
+        Self::GetCurrentNoteError(v)
+    }
+}
+impl From<links::ResolveLinkPathError> for FollowLinkError {
+    fn from(v: links::ResolveLinkPathError) -> Self {
+        Self::ResolveLinkPathError(v)
+    }
+}
+impl From<markdown::MdParseError> for FollowLinkError {
+    fn from(v: markdown::MdParseError) -> Self {
+        Self::ParseMarkdownError(v)
+    }
+}
+impl From<note::ParseFromFilepathError> for FollowLinkError {
+    fn from(v: note::ParseFromFilepathError) -> Self {
+        Self::ParseFromFilepathError(v)
+    }
+}
+impl From<api::Error> for FollowLinkError {
+    fn from(v: api::Error) -> Self {
+        Self::ApiError(v)
+    }
+}
+
+#[derive(Debug)]
+pub enum DeleteNoteError {
+    ApiError(api::Error),
+    NonUtf8CurrentBufferPath,
+    IoError(std::io::Error),
+}
+impl std::error::Error for DeleteNoteError {}
+impl std::fmt::Display for DeleteNoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeleteNoteError::ApiError(e) => e.fmt(f),
+            DeleteNoteError::NonUtf8CurrentBufferPath => write!(f, "current buffer path is not valid utf8"),
+            DeleteNoteError::IoError(e) => e.fmt(f),
+        }
+    }
+}
+impl From<std::io::Error> for DeleteNoteError {
+    fn from(v: std::io::Error) -> Self {
+        Self::IoError(v)
+    }
+}
+impl From<api::Error> for DeleteNoteError {
+    fn from(v: api::Error) -> Self {
+        Self::ApiError(v)
+    }
+}
+
+#[derive(Debug)]
+pub enum AutogenerateError {
+    ApiError(api::Error),
+    ListAllPhysicalNotesError(ListAllPhysicalNotesError),
+    MdParseError(markdown::MdParseError), // TODO: remove most of these errors and just dont list files that trigger them?
+    InvalidFrontmatter(markdown::InvalidFrontmatter),
+    GetFrontmatterFieldError(markdown::GetFrontmatterFieldError),
+    GetTimestampError(markdown::GetTimestampError),
+    FormatLinkPathError(links::FormatLinkPathError),
+    ResolveLinkPathError(links::ResolveLinkPathError),
+    ParseFromFilepathError(note::ParseFromFilepathError),
+    GetCurrentNoteError(note::GetCurrentNoteError),
+}
+impl std::error::Error for AutogenerateError {}
+impl std::fmt::Display for AutogenerateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AutogenerateError::ApiError(e) => e.fmt(f),
+            AutogenerateError::ListAllPhysicalNotesError(e) => e.fmt(f),
+            AutogenerateError::MdParseError(e) => e.fmt(f),
+            AutogenerateError::InvalidFrontmatter(e) => e.fmt(f),
+            AutogenerateError::GetFrontmatterFieldError(e) => e.fmt(f),
+            AutogenerateError::GetTimestampError(e) => e.fmt(f),
+            AutogenerateError::FormatLinkPathError(e) => e.fmt(f),
+            AutogenerateError::ResolveLinkPathError(e) => e.fmt(f),
+            AutogenerateError::ParseFromFilepathError(e) => e.fmt(f),
+            AutogenerateError::GetCurrentNoteError(e) => e.fmt(f),
+        }
+    }
+}
+impl From<note::GetCurrentNoteError> for AutogenerateError {
+    fn from(v: note::GetCurrentNoteError) -> Self {
+        Self::GetCurrentNoteError(v)
+    }
+}
+impl From<links::ResolveLinkPathError> for AutogenerateError {
+    fn from(v: links::ResolveLinkPathError) -> Self {
+        Self::ResolveLinkPathError(v)
+    }
+}
+impl From<note::ParseFromFilepathError> for AutogenerateError {
+    fn from(v: note::ParseFromFilepathError) -> Self {
+        Self::ParseFromFilepathError(v)
+    }
+}
+impl From<links::FormatLinkPathError> for AutogenerateError {
+    fn from(v: links::FormatLinkPathError) -> Self {
+        Self::FormatLinkPathError(v)
+    }
+}
+impl From<markdown::GetTimestampError> for AutogenerateError {
+    fn from(v: markdown::GetTimestampError) -> Self {
+        Self::GetTimestampError(v)
+    }
+}
+impl From<markdown::GetFrontmatterFieldError> for AutogenerateError {
+    fn from(v: markdown::GetFrontmatterFieldError) -> Self {
+        Self::GetFrontmatterFieldError(v)
+    }
+}
+impl From<markdown::InvalidFrontmatter> for AutogenerateError {
+    fn from(v: markdown::InvalidFrontmatter) -> Self {
+        Self::InvalidFrontmatter(v)
+    }
+}
+impl From<markdown::MdParseError> for AutogenerateError {
+    fn from(v: markdown::MdParseError) -> Self {
+        Self::MdParseError(v)
+    }
+}
+impl From<ListAllPhysicalNotesError> for AutogenerateError {
+    fn from(v: ListAllPhysicalNotesError) -> Self {
+        Self::ListAllPhysicalNotesError(v)
+    }
+}
+impl From<api::Error> for AutogenerateError {
+    fn from(v: api::Error) -> Self {
+        Self::ApiError(v)
+    }
+}
+
+#[derive(Debug)]
+pub enum ListAllPhysicalNotesError {
+    NonUtf8HomePath,
+    GlobPatternError(glob::PatternError),
+    GlobError(glob::GlobError),
+    ParseFromFilepathError(note::ParseFromFilepathError),
+}
+impl std::fmt::Display for ListAllPhysicalNotesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ListAllPhysicalNotesError::NonUtf8HomePath => write!(f, "home path is not valid utf8"),
+            ListAllPhysicalNotesError::GlobPatternError(e) => e.fmt(f),
+            ListAllPhysicalNotesError::GlobError(e) => e.fmt(f),
+            ListAllPhysicalNotesError::ParseFromFilepathError(e) => e.fmt(f),
+        }
+    }
+}
+impl From<note::ParseFromFilepathError> for ListAllPhysicalNotesError {
+    fn from(v: note::ParseFromFilepathError) -> Self {
+        Self::ParseFromFilepathError(v)
+    }
+}
+impl From<glob::PatternError> for ListAllPhysicalNotesError {
+    fn from(v: glob::PatternError) -> Self {
+        Self::GlobPatternError(v)
+    }
+}
+impl From<glob::GlobError> for ListAllPhysicalNotesError {
+    fn from(v: glob::GlobError) -> Self {
+        Self::GlobError(v)
+    }
+}
+
+pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Result<Note, ApiErrorOrNonUtf8Path> {
     let title: String = nvim_oxi::api::eval(r#"input("note name: ")"#)?;
 
     let now = chrono::Local::now();
@@ -65,7 +438,7 @@ pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Resul
     .to_vec();
 
     let mut buf = api::create_buf(true, false)?;
-    buf.set_name(buf_path.to_str().ok_or_else(|| Error::msg(format!("invalid buf path {buf_path:?}")))?)?;
+    buf.set_name(buf_path.to_str().ok_or(ApiErrorOrNonUtf8Path::NonUtf8Path)?)?;
     buf.set_lines(0..0, true, buf_contents)?;
     buf.set_option("filetype", "wikipluginnote")?;
 
@@ -76,26 +449,26 @@ pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Resul
     Ok(Note::new_physical(directories, note_id))
 }
 
-pub fn open_index(config: &Config) -> Result<(), Error> {
+pub fn open_index(config: &Config) -> Result<(), ApiErrorOrNonUtf8Path> {
     let index_path = config.home_path.join("index.md");
-    let index_path: &str = index_path.to_str().ok_or_else(|| Error::msg(format!("invalid note index path {index_path:?}")))?;
+    let index_path: &str = index_path.to_str().ok_or(ApiErrorOrNonUtf8Path::NonUtf8Path)?;
     api::cmd(&api::types::CmdInfos::builder().cmd("edit").args([index_path]).build(), &api::opts::CmdOpts::default())?;
 
     Ok(())
 }
 
-pub fn new_note_and_insert_link(config: &Config) -> Result<(), Error> {
+pub fn new_note_and_insert_link(config: &Config) -> Result<(), InsertLinkError> {
     let new_note = new_note(config, Vec::new(), false)?;
     insert_link_at_cursor(config, &new_note, None)?;
     Ok(())
 }
 
-pub fn insert_link_to_path_at_cursor_or_create(config: &Config, link_to: Option<String>, link_text: Option<String>) -> Result<(), Error> {
+pub fn insert_link_to_path_at_cursor_or_create(config: &Config, link_to: Option<String>, link_text: Option<String>) -> Result<(), InsertLinkError> {
     let n;
     let note = match link_to {
         Some(link_to_path) => {
             let path = Path::new(&link_to_path);
-            n = Note::Physical(PhysicalNote::parse_from_filepath(&config, path)?);
+            n = Note::Physical(PhysicalNote::parse_from_filepath(config, path)?);
             Some(&n)
         }
         None => None,
@@ -106,7 +479,7 @@ pub fn insert_link_to_path_at_cursor_or_create(config: &Config, link_to: Option<
     Ok(())
 }
 
-pub fn insert_link_at_cursor_or_create(config: &Config, link_to: Option<&Note>, link_text: Option<String>) -> Result<(), Error> {
+pub fn insert_link_at_cursor_or_create(config: &Config, link_to: Option<&Note>, link_text: Option<String>) -> Result<(), InsertLinkError> {
     let note = match link_to {
         Some(link_to) => link_to,
         None => &new_note(config, Vec::new(), false)?,
@@ -115,35 +488,35 @@ pub fn insert_link_at_cursor_or_create(config: &Config, link_to: Option<&Note>, 
     Ok(())
 }
 
-pub fn insert_link_at_cursor(config: &Config, link_to: &Note, link_text: Option<String>) -> Result<(), Error> {
+pub fn insert_link_at_cursor(config: &Config, link_to: &Note, link_text: Option<String>) -> Result<(), InsertLinkError> {
     match link_to {
         Note::Physical(link_to) => {
             let link_text = match link_text {
                 Some(lt) => lt,
-                None => markdown::get_title(&markdown::parse_frontmatter(&markdown::parse_markdown(&link_to.read_contents(&config)?)?)?)
+                None => markdown::get_title(&markdown::parse_frontmatter(&markdown::parse_markdown(&link_to.read_contents(config)?)?)?)
                     .unwrap_or_default(),
             };
 
-            let current_note = Note::get_current_note(&config)?;
-            let link_path_text = links::format_link_path(&config, &current_note, &link_to.path(&config))?;
+            let current_note = Note::get_current_note(config)?;
+            let link_path_text = links::format_link_path(config, &current_note, &link_to.path(config))?;
             api::put([format!("[{link_text}]({link_path_text})")].into_iter(), api::types::RegisterType::Charwise, false, true)?;
 
             Ok(())
         }
-        Note::Scratch(_) => Err(Error::msg("cannot link to scratch note"))?,
+        Note::Scratch(_) => Err(InsertLinkError::CannotLinkToScratchNote)?,
     }
 }
 
-pub fn open_tag_index(config: &Config) -> Result<(), Error> {
+pub fn open_tag_index(config: &Config) -> Result<(), TagIndexError> {
     let notes = list_all_physical_notes(config)?;
     let mut tag_table: BTreeMap<Tag, Vec<(&PhysicalNote, String, PathBuf)>> = BTreeMap::new(); // TODO: eventually this should become &(Note, String, PathBuf)
     let mut tag_list = BTreeSet::new();
 
     for note in &notes {
-        let frontmatter = markdown::parse_frontmatter(&markdown::parse_markdown(&note.read_contents(&config)?)?)?;
+        let frontmatter = markdown::parse_frontmatter(&markdown::parse_markdown(&note.read_contents(config)?)?)?;
         let title = markdown::get_title(&frontmatter).unwrap_or_default();
         let tags = markdown::get_tags(&frontmatter).unwrap_or_default();
-        let path = note.path(&config);
+        let path = note.path(config);
 
         for tag in tags {
             tag_table.entry(tag.clone()).or_default().push((note, title.clone(), path.clone()));
@@ -158,7 +531,7 @@ pub fn open_tag_index(config: &Config) -> Result<(), Error> {
     for tag in tag_list {
         lines.extend([format!("# {}", tag), "".to_string()]);
         for (_, note_title, note_path) in &tag_table[&tag] {
-            lines.extend([format!("- [{}]({})", note_title, note_path.to_str().ok_or(Error::msg("PathBuf contains invalid unicode"))?)]);
+            lines.extend([format!("- [{}]({})", note_title, note_path.to_str().ok_or(TagIndexError::NonUtf8Path)?)]);
         }
         lines.extend(["".to_string()]);
     }
@@ -169,14 +542,14 @@ pub fn open_tag_index(config: &Config) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn follow_link(config: &Config) -> Result<(), Error> {
-    let current_note = Note::get_current_note(&config)?;
-    let current_md = markdown::parse_markdown(&current_note.read_contents(&config)?)?;
+pub fn follow_link(config: &Config) -> Result<(), FollowLinkError> {
+    let current_note = Note::get_current_note(config)?;
+    let current_md = markdown::parse_markdown(&current_note.read_contents(config)?)?;
 
     let cursor_byte_index: usize = nvim_oxi::api::eval(r#"line2byte(line(".")) + col(".") - 1 - 1"#)?;
     let (_, link_path) = markdown::rec_find_preorder(&current_md, &mut |node| match node {
         ::markdown::mdast::Node::Link(::markdown::mdast::Link { children: _, position: Some(position), url, title: _ }) => {
-            if markdown::point_in_position(position, cursor_byte_index.try_into().expect("byte index u64 does not fit into usize")) {
+            if markdown::point_in_position(position, cursor_byte_index) {
                 Some(url.to_string())
             } else {
                 None
@@ -184,22 +557,19 @@ pub fn follow_link(config: &Config) -> Result<(), Error> {
         }
         _ => None,
     })
-    .ok_or(Error::msg("not on a link"))?;
+    .ok_or(FollowLinkError::NotOnALink)?;
 
-    let new_note_path = links::resolve_link_path(&config, &current_note, &link_path)?;
+    let new_note_path = links::resolve_link_path(config, &current_note, &link_path)?;
 
     api::cmd(
-        &api::types::CmdInfos::builder()
-            .cmd("edit")
-            .args([new_note_path.to_str().ok_or(Error::msg("pathbuf cannot be converted to string"))?])
-            .build(),
+        &api::types::CmdInfos::builder().cmd("edit").args([new_note_path.to_str().ok_or(FollowLinkError::NonUtf8Path)?]).build(),
         &api::opts::CmdOpts::default(),
     )?;
 
     Ok(())
 }
 
-pub fn delete_note() -> Result<(), Error> {
+pub fn delete_note() -> Result<(), DeleteNoteError> {
     let current_buf_path_str: String = nvim_oxi::api::eval(r#"expand("%:p")"#)?;
     let current_buf_path = Path::new(&current_buf_path_str);
 
@@ -207,14 +577,14 @@ pub fn delete_note() -> Result<(), Error> {
         nvim_oxi::api::eval(r#"input("are you sure you want to delete this note?\noptions: 'yes' for yes, anything else for no\ninput: ")"#)?;
     if choice == "yes" {
         std::fs::remove_file(current_buf_path)?;
-        api::command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_str().ok_or(Error::msg("current buffer path should be utf8"))?))?;
+        api::command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_str().ok_or(DeleteNoteError::NonUtf8CurrentBufferPath)?))?;
     } else {
         api::command(r#"echo "\nnot deleting""#)?;
     }
     Ok(())
 }
 
-pub fn regenerate_autogenerated_sections(config: &Config) -> Result<(), Error> {
+pub fn regenerate_autogenerated_sections(config: &Config) -> Result<(), AutogenerateError> {
     let current_note = Note::get_current_note(&config)?;
     let current_buf = api::get_current_buf();
 
@@ -225,7 +595,7 @@ pub fn regenerate_autogenerated_sections(config: &Config) -> Result<(), Error> {
     let mut match_index = 0;
     loop {
         let buf_lines = current_buf.get_lines(.., false)?.collect::<Vec<_>>();
-        return Err(anyhow::Error::msg("not implemented yet"));
+        todo!()
         // TODO: don't collect?
 
         // TODO: redo this without regex crate
@@ -430,14 +800,11 @@ pub fn regenerate_autogenerated_sections(config: &Config) -> Result<(), Error> {
     Ok(())
 }
 
-fn list_all_physical_notes(config: &Config) -> Result<Vec<PhysicalNote>, Error> {
-    glob::glob(&format!("{}/**/*.md", config.home_path.to_str().ok_or(Error::msg("wiki home path should always be valid unicode"))?))?
-        .map(|path| match path {
-            Ok(path) => {
-                let path = path.as_path();
-                PhysicalNote::parse_from_filepath(&config, path)
-            }
-            Err(e) => Err(e)?,
+fn list_all_physical_notes(config: &Config) -> Result<Vec<PhysicalNote>, ListAllPhysicalNotesError> {
+    glob::glob(&format!("{}/**/*.md", config.home_path.to_str().ok_or(ListAllPhysicalNotesError::NonUtf8HomePath)?))?
+        .map(|path| {
+            path.map_err(ListAllPhysicalNotesError::from)
+                .and_then(|path| PhysicalNote::parse_from_filepath(config, &path).map_err(ListAllPhysicalNotesError::from))
         })
         .collect::<Result<Vec<_>, _>>()
 }

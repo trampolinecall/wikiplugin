@@ -3,7 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Error;
 use nvim_oxi::api::{self, Buffer};
 
 use crate::plugin::Config;
@@ -27,28 +26,100 @@ pub enum Note {
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
 pub struct Tag(Vec<String>);
 
+#[derive(Debug)]
+pub enum ParseFromFilepathError {
+    CannotCanonicalize(std::io::Error),
+    FileNotWithinWikiDir,
+    NoFileStem,
+    NoPathParent,
+    OsStringNotValidString,
+}
+impl Display for ParseFromFilepathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseFromFilepathError::CannotCanonicalize(error) => write!(f, "cannot canonicalize path: {error}"),
+            ParseFromFilepathError::FileNotWithinWikiDir => write!(f, "file is not within wiki directory"),
+            ParseFromFilepathError::NoFileStem => write!(f, "file does not have stem"),
+            ParseFromFilepathError::NoPathParent => write!(f, "path does not have parent"),
+            ParseFromFilepathError::OsStringNotValidString => write!(f, "os strings are not valid strings"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ReadContentsError {
+    Io(std::io::Error),
+    NvimApi(api::Error),
+}
+impl Display for ReadContentsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadContentsError::Io(e) => e.fmt(f),
+            ReadContentsError::NvimApi(e) => e.fmt(f),
+        }
+    }
+}
+impl From<api::Error> for ReadContentsError {
+    fn from(v: api::Error) -> Self {
+        Self::NvimApi(v)
+    }
+}
+impl From<std::io::Error> for ReadContentsError {
+    fn from(v: std::io::Error) -> Self {
+        Self::Io(v)
+    }
+}
+
+#[derive(Debug)]
+pub enum GetCurrentNoteError {
+    NvimApi(api::Error),
+    ParseFromFilepathError(ParseFromFilepathError),
+}
+impl Display for GetCurrentNoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GetCurrentNoteError::NvimApi(e) => e.fmt(f),
+            GetCurrentNoteError::ParseFromFilepathError(e) => e.fmt(f),
+        }
+    }
+}
+impl From<api::Error> for GetCurrentNoteError {
+    fn from(v: api::Error) -> Self {
+        Self::NvimApi(v)
+    }
+}
+impl From<ParseFromFilepathError> for GetCurrentNoteError {
+    fn from(v: ParseFromFilepathError) -> Self {
+        Self::ParseFromFilepathError(v)
+    }
+}
+
 impl PhysicalNote {
-    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, Error> {
-        let path_abs_canon = if path.is_absolute() { path.canonicalize()? } else { config.home_path.join(path).canonicalize()? };
+    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, ParseFromFilepathError> {
+        let path_abs_canon = if path.is_absolute() {
+            path.canonicalize().map_err(ParseFromFilepathError::CannotCanonicalize)?
+        } else {
+            config.home_path.join(path).canonicalize().map_err(ParseFromFilepathError::CannotCanonicalize)?
+        };
         let directories_path = if path_abs_canon.starts_with(&config.home_path) {
             path_abs_canon.strip_prefix(&config.home_path).expect("strip_prefix should return Ok if starts_with returns true")
         } else {
-            Err(Error::msg("path that does not point to a file within the wiki home directory is not a note"))?
+            Err(ParseFromFilepathError::FileNotWithinWikiDir)?
         };
 
         Ok(PhysicalNote {
             directories: directories_path
                 .parent()
-                .ok_or(Error::msg("note path has no parent"))?
+                .ok_or(ParseFromFilepathError::NoPathParent)?
                 .iter()
                 .map(|p| p.to_str().map(ToString::to_string))
                 .collect::<Option<Vec<_>>>()
-                .ok_or(Error::msg("note directories are not all valid strings"))?,
+                .ok_or(ParseFromFilepathError::OsStringNotValidString)?,
             id: path
                 .file_stem()
-                .ok_or(Error::msg("could not get file stem of note path"))?
+                .ok_or(ParseFromFilepathError::NoFileStem)?
                 .to_str()
-                .ok_or(Error::msg("os str is not valid str"))?
+                .ok_or(ParseFromFilepathError::OsStringNotValidString)?
                 .to_string(),
         })
     }
@@ -61,7 +132,7 @@ impl PhysicalNote {
         path
     }
 
-    pub fn read_contents(&self, config: &Config) -> Result<String, Error> {
+    pub fn read_contents(&self, config: &Config) -> Result<String, ReadContentsError> {
         log::info!("reading contents of file {}", self.path(config).display());
         if let Some(buffer_contents) = self.read_contents_in_nvim(config)? {
             Ok(buffer_contents)
@@ -70,7 +141,7 @@ impl PhysicalNote {
         }
     }
 
-    fn get_buffer_in_nvim(&self, config: &Config) -> Result<Option<Buffer>, Error> {
+    fn get_buffer_in_nvim(&self, config: &Config) -> Result<Option<Buffer>, api::Error> {
         let buflist = api::list_bufs();
         let mut current_buf = None;
         for buf in buflist {
@@ -95,7 +166,7 @@ impl PhysicalNote {
         }
     }
     // TODO: this function is duplicated verbatim with Note
-    fn read_contents_in_nvim(&self, config: &Config) -> Result<Option<String>, Error> {
+    fn read_contents_in_nvim(&self, config: &Config) -> Result<Option<String>, api::Error> {
         match self.get_buffer_in_nvim(config)? {
             Some(buf) => Ok(Some(buf.get_lines(.., false)?.map(|s| s.to_string_lossy().to_string() + "\n").collect())), // TODO: find a better solution than to_string_lossy
             None => Ok(None),
@@ -107,7 +178,7 @@ impl Note {
         Note::Physical(PhysicalNote { directories, id })
     }
 
-    pub fn get_current_note(config: &Config) -> Result<Note, Error> {
+    pub fn get_current_note(config: &Config) -> Result<Note, GetCurrentNoteError> {
         let current_buf = nvim_oxi::api::get_current_buf();
         let is_scratch =
             nvim_oxi::api::get_option_value::<String>("buftype", &nvim_oxi::api::opts::OptionOpts::builder().buffer(current_buf.clone()).build())?
@@ -128,24 +199,22 @@ impl Note {
         }
     }
 
-    pub fn read_contents(&self, config: &Config) -> Result<String, Error> {
+    pub fn read_contents(&self, config: &Config) -> Result<String, ReadContentsError> {
         match self {
             Note::Physical(n) => n.read_contents(config),
-            Note::Scratch(ScratchNote { buffer }) => {
-                Ok(buffer.get_lines(.., false)?.into_iter().map(|s| s.to_string_lossy().to_string() + "\n").collect())
-            } // TODO: find a better solution than to_string_lossy
+            Note::Scratch(ScratchNote { buffer }) => Ok(buffer.get_lines(.., false)?.map(|s| s.to_string_lossy().to_string() + "\n").collect()), // TODO: find a better solution than to_string_lossy
         }
     }
 
-    fn get_buffer_in_nvim(&self, config: &Config) -> Result<Option<Buffer>, Error> {
+    fn get_buffer_in_nvim(&self, config: &Config) -> Result<Option<Buffer>, api::Error> {
         match self {
             Note::Physical(n) => n.get_buffer_in_nvim(config),
             Note::Scratch(ScratchNote { buffer }) => Ok(Some(buffer.clone())),
         }
     }
-    fn read_contents_in_nvim(&self, config: &Config) -> Result<Option<String>, Error> {
+    fn read_contents_in_nvim(&self, config: &Config) -> Result<Option<String>, api::Error> {
         match self.get_buffer_in_nvim(config)? {
-            Some(buf) => Ok(Some(buf.get_lines(.., false)?.into_iter().map(|s| s.to_string_lossy().to_string() + "\n").collect())), // TODO: find a better solution than to_string_lossy
+            Some(buf) => Ok(Some(buf.get_lines(.., false)?.map(|s| s.to_string_lossy().to_string() + "\n").collect())), // TODO: find a better solution than to_string_lossy
             None => Ok(None),
         }
     }
