@@ -131,9 +131,7 @@ impl Note {
     pub fn read_contents(&self, config: &Config) -> Result<String, Error> {
         match self {
             Note::Physical(n) => n.read_contents(config),
-            Note::Scratch(ScratchNote { buffer }) => {
-                Ok(buffer.get_lines(.., false)?.into_iter().map(|s| s.to_string_lossy().to_string() + "\n").collect())
-            } // TODO: find a better solution than to_string_lossy
+            Note::Scratch(ScratchNote { buffer }) => Ok(buffer.get_lines(.., false)?.map(|s| s.to_string_lossy().to_string() + "\n").collect()), // TODO: find a better solution than to_string_lossy
         }
     }
 
@@ -145,7 +143,7 @@ impl Note {
     }
     fn read_contents_in_nvim(&self, config: &Config) -> Result<Option<String>, Error> {
         match self.get_buffer_in_nvim(config)? {
-            Some(buf) => Ok(Some(buf.get_lines(.., false)?.into_iter().map(|s| s.to_string_lossy().to_string() + "\n").collect())), // TODO: find a better solution than to_string_lossy
+            Some(buf) => Ok(Some(buf.get_lines(.., false)?.map(|s| s.to_string_lossy().to_string() + "\n").collect())), // TODO: find a better solution than to_string_lossy
             None => Ok(None),
         }
     }
