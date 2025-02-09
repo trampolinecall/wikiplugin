@@ -6,7 +6,7 @@ mod connection;
 mod plugin;
 
 #[nvim_oxi::plugin]
-fn main() -> Dictionary {
+fn wikiplugin_internal() -> Dictionary {
     flexi_logger::Logger::try_with_env()
         .expect("could not initialize logger")
         .log_to_file(flexi_logger::FileSpec::default())
