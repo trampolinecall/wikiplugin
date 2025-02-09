@@ -2,7 +2,7 @@ use nvim_oxi::{Dictionary, Function, Object};
 
 use crate::plugin::{note::Note, Config};
 
-mod connection;
+mod error;
 mod plugin;
 
 #[nvim_oxi::plugin]
@@ -74,8 +74,8 @@ fn do_function<E: std::error::Error>(config: Dictionary, r: impl FnOnce(Config) 
     match Config::parse_from_dict(config) {
         Ok(config) => match r(config) {
             Ok(()) => (),
-            Err(e) => connection::print_error(&e as &dyn std::error::Error),
+            Err(e) => error::print_error(&e as &dyn std::error::Error),
         },
-        Err(e) => connection::print_error(&e as &dyn std::error::Error),
+        Err(e) => error::print_error(&e as &dyn std::error::Error),
     }
 }
