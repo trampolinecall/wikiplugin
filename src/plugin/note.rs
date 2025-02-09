@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Error;
-use nvim_rs::{compat::tokio::Compat, Buffer, Neovim};
+use nvim_oxi::api::{self, Buffer};
 
 use crate::plugin::Config;
 
@@ -16,7 +16,7 @@ pub struct PhysicalNote {
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct ScratchNote {
-    pub buffer: Buffer<Compat<tokio::fs::File>>,
+    pub buffer: Buffer,
 }
 
 #[derive(PartialEq, Eq, Clone)]
@@ -61,32 +61,22 @@ impl PhysicalNote {
         path
     }
 
-    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
+    pub fn read_contents(&self, config: &Config) -> Result<String, Error> {
         log::info!("reading contents of file {}", self.path(config).display());
-        if let Some(buffer_contents) = self.read_contents_in_nvim(config, nvim).await? {
+        if let Some(buffer_contents) = self.read_contents_in_nvim(config)? {
             Ok(buffer_contents)
         } else {
-            Ok(tokio::fs::read_to_string(self.path(config)).await?)
+            Ok(std::fs::read_to_string(self.path(config))?)
         }
     }
 
-    async fn get_buffer_in_nvim(
-        &self,
-        config: &Config,
-        nvim: &mut Neovim<Compat<tokio::fs::File>>,
-    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
-        let buflist = nvim.list_bufs().await?;
+    fn get_buffer_in_nvim(&self, config: &Config) -> Result<Option<Buffer>, Error> {
+        let buflist = api::list_bufs();
         let mut current_buf = None;
         for buf in buflist {
-            let buf_number = &buf.get_number().await?;
-            nvim_eval_and_cast!(
-                buf_path,
-                nvim,
-                &format!(r##"expand("#{}:p")"##, buf_number),
-                as_str,
-                "vim function expand( should always return a number"
-            );
-            let buf_path = Path::new(buf_path);
+            let buf_number = &buf.handle();
+            let buf_path: String = nvim_oxi::api::eval(&format!(r##"expand("#{}:p")"##, buf_number))?;
+            let buf_path = Path::new(&buf_path);
             if buf_path == self.path(config) {
                 current_buf = Some(buf);
                 break;
@@ -95,7 +85,7 @@ impl PhysicalNote {
 
         match current_buf {
             Some(b) => {
-                if b.is_loaded().await? {
+                if b.is_loaded() {
                     Ok(Some(b))
                 } else {
                     Ok(None)
@@ -105,9 +95,9 @@ impl PhysicalNote {
         }
     }
     // TODO: this function is duplicated verbatim with Note
-    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
-        match self.get_buffer_in_nvim(config, nvim).await? {
-            Some(buf) => Ok(Some(buf.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect())),
+    fn read_contents_in_nvim(&self, config: &Config) -> Result<Option<String>, Error> {
+        match self.get_buffer_in_nvim(config)? {
+            Some(buf) => Ok(Some(buf.get_lines(.., false)?.map(|s| s.to_string_lossy().to_string() + "\n").collect())), // TODO: find a better solution than to_string_lossy
             None => Ok(None),
         }
     }
@@ -117,14 +107,16 @@ impl Note {
         Note::Physical(PhysicalNote { directories, id })
     }
 
-    pub async fn get_current_note(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Note, Error> {
-        let current_buf = nvim.get_current_buf().await?;
-        let is_scratch = current_buf.get_option("buftype").await?.as_str().expect("option buftype should be a bool") == "nofile";
+    pub fn get_current_note(config: &Config) -> Result<Note, Error> {
+        let current_buf = nvim_oxi::api::get_current_buf();
+        let is_scratch =
+            nvim_oxi::api::get_option_value::<String>("buftype", &nvim_oxi::api::opts::OptionOpts::builder().buffer(current_buf.clone()).build())?
+                == "nofile";
         if is_scratch {
             Ok(Note::Scratch(ScratchNote { buffer: current_buf }))
         } else {
-            nvim_eval_and_cast!(current_buf_path_str, nvim, r#"expand("%:p")"#, as_str, "vim function expand( should always return a string");
-            let path = Path::new(current_buf_path_str);
+            let current_buf_path_str: String = nvim_oxi::api::eval(r#"expand("%:p")"#)?;
+            let path = Path::new(&current_buf_path_str);
             Ok(Note::Physical(PhysicalNote::parse_from_filepath(config, path)?))
         }
     }
@@ -136,26 +128,24 @@ impl Note {
         }
     }
 
-    pub async fn read_contents(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<String, Error> {
+    pub fn read_contents(&self, config: &Config) -> Result<String, Error> {
         match self {
-            Note::Physical(n) => n.read_contents(config, nvim).await,
-            Note::Scratch(ScratchNote { buffer }) => Ok(buffer.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect()),
+            Note::Physical(n) => n.read_contents(config),
+            Note::Scratch(ScratchNote { buffer }) => {
+                Ok(buffer.get_lines(.., false)?.into_iter().map(|s| s.to_string_lossy().to_string() + "\n").collect())
+            } // TODO: find a better solution than to_string_lossy
         }
     }
 
-    async fn get_buffer_in_nvim(
-        &self,
-        config: &Config,
-        nvim: &mut Neovim<Compat<tokio::fs::File>>,
-    ) -> Result<Option<nvim_rs::Buffer<Compat<tokio::fs::File>>>, Error> {
+    fn get_buffer_in_nvim(&self, config: &Config) -> Result<Option<Buffer>, Error> {
         match self {
-            Note::Physical(n) => n.get_buffer_in_nvim(config, nvim).await,
+            Note::Physical(n) => n.get_buffer_in_nvim(config),
             Note::Scratch(ScratchNote { buffer }) => Ok(Some(buffer.clone())),
         }
     }
-    async fn read_contents_in_nvim(&self, config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>) -> Result<Option<String>, Error> {
-        match self.get_buffer_in_nvim(config, nvim).await? {
-            Some(buf) => Ok(Some(buf.get_lines(0, -1, false).await?.into_iter().map(|s| s + "\n").collect())),
+    fn read_contents_in_nvim(&self, config: &Config) -> Result<Option<String>, Error> {
+        match self.get_buffer_in_nvim(config)? {
+            Some(buf) => Ok(Some(buf.get_lines(.., false)?.into_iter().map(|s| s.to_string_lossy().to_string() + "\n").collect())), // TODO: find a better solution than to_string_lossy
             None => Ok(None),
         }
     }
