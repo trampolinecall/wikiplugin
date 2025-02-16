@@ -137,7 +137,6 @@ error_union! {
 error_union! {
     pub enum DeleteNoteError {
         ApiError(api::Error),
-        NonUtf8Path(NonUtf8Path),
         IoError(std::io::Error),
     }
 }
@@ -337,7 +336,7 @@ pub fn delete_note() -> Result<(), DeleteNoteError> {
         nvim_oxi::api::eval(r#"input("are you sure you want to delete this note?\noptions: 'yes' for yes, anything else for no\ninput: ")"#)?;
     if choice == "yes" {
         std::fs::remove_file(current_buf_path)?;
-        api::command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_str().ok_or(NonUtf8Path)?))?;
+        api::command(&format!(r#"echo "\n{} deleted""#, current_buf_path.to_string_lossy()))?;
     } else {
         api::command(r#"echo "\nnot deleting""#)?;
     }
