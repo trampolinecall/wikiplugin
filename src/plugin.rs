@@ -608,61 +608,73 @@ pub(crate) fn list_notes_lines_for_search(config: &Config) -> Result<Vec<Diction
         .collect())
 }
 
-fn open_maintenance_index(config: &Config) -> Result<(), Error> {
-    async fn invalid_title(config: &Config, note: &PhysicalNote) -> bool {
-        note.parse_markdown(config)
-            .await
-            .and_then(|markdown| markdown::parse_frontmatter(&markdown))
-            .and_then(|frontmatter| markdown::get_title(&frontmatter))
+error_union! {
+    pub enum OpenMaintenanceIndexError {
+        Api(api::Error),
+        ListAllPhysicalNotes(ListAllPhysicalNotesError),
+        FormatLinkPath(links::FormatLinkPathError),
+    }
+}
+pub fn open_maintenance_index(config: &Config) -> Result<(), OpenMaintenanceIndexError> {
+    fn invalid_title(config: &Config, note: &PhysicalNote) -> bool {
+        error_union! {
+            enum InvalidTitleError {
+                ReadContentsError(note::ReadContentsError),
+            }
+        }
+        note.read_contents(config)
+            .map_err(|_| ())
+            .and_then(|contents| markdown::parse_markdown(&contents).map_err(|_| ()))
+            .and_then(|markdown| markdown::parse_frontmatter(&markdown).map_err(|_| ()))
+            .and_then(|frontmatter| markdown::get_title(&frontmatter).map_err(|_| ()))
             .is_ok()
     }
 
     // TODO: flag files that are only frontmatter
-    async fn empty(config: &Config, nvim: &mut Neovim<Compat<tokio::fs::File>>, note: &PhysicalNote) -> bool {
-        note.read_contents(config, nvim).await.map(|contents| contents.trim_start().trim_end() == "").unwrap_or(false)
+    fn empty(config: &Config, note: &PhysicalNote) -> bool {
+        note.read_contents(config).map(|contents| contents.trim_start().trim_end() == "").unwrap_or(false)
     }
     // TODO: scan for todos
 
-    let notes = self.list_all_physical_notes()?;
+    let notes = list_all_physical_notes(config)?;
 
-    let buffer = nvim.create_buf(true, true).await?;
-    buffer.set_option("filetype", "wikipluginnote".into()).await?;
+    let mut buffer = api::create_buf(true, true)?;
+    buffer.set_option("filetype", "wikipluginnote")?;
     let current_note = Note::Scratch(ScratchNote { buffer: buffer.clone() });
 
-    let insert_lines = |lines: Vec<String>| async {
-        buffer.set_lines(-2, -2, false, lines).await?;
-        Ok::<(), Error>(())
-    };
-    let insert_section = |title: String, lines: Vec<String>| async move {
-        insert_lines(vec![format!("# {title}"), "".to_string()]).await?;
-        insert_lines(lines).await?;
-        insert_lines(vec!["".to_string()]).await?;
-        Ok::<(), Error>(())
+    let mut result_lines = Vec::new();
+    let mut insert_section = |title: String, lines: Vec<String>| {
+        result_lines.push(format!("# {title}"));
+        result_lines.push("".to_string());
+        result_lines.extend(lines);
+        result_lines.push("".to_string());
     };
 
     {
         let mut invalid_titles = Vec::new();
         let mut index = 0;
         for note in &notes {
-            if invalid_title(&self.config, nvim, note).await {
-                invalid_titles.push(format!("- [unnamed {}]({})", index, links::format_link(&self.config, &current_note, &note.path(&self.config))?));
+            if invalid_title(config, note) {
+                invalid_titles.push(format!("- [unnamed {}]({})", index, links::format_link_path(config, &current_note, &note.path(config))?));
                 index += 1;
             }
         }
-        insert_section("invalid title".to_string(), invalid_titles).await?;
+        insert_section("invalid title".to_string(), invalid_titles);
     }
 
     {
         let mut empty_files = Vec::new();
         let mut index = 0;
         for note in &notes {
-            if empty(&self.config, nvim, note).await {
-                empty_files.push(format!("- [empty {}]({})", index, links::format_link(&self.config, &current_note, &note.path(&self.config))?));
+            if empty(config, note) {
+                empty_files.push(format!("- [empty {}]({})", index, links::format_link_path(config, &current_note, &note.path(config))?));
                 index += 1;
             }
         }
-        insert_section("completely empty".to_string(), empty_files).await?;
+        insert_section("completely empty".to_string(), empty_files);
     }
+
+    buffer.set_lines(0..0, false, result_lines)?;
 
     Ok(())
 }
