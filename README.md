@@ -18,6 +18,3 @@ Plug 'trampolinecall/wikiplugin', { 'do': './build.py' }
 
 - [ ] more consistent error handling with panics
 - [ ] write documentation about config options
-- [ ] find some way to automatically make sure that messages sent are the same on the lua and rust side
-- [x] add custom filetype
-- [ ] properly handle PathBuf not being utf8
