@@ -672,27 +672,28 @@ error_union! {
         Api(api::Error),
         ListAllPhysicalNotes(ListAllPhysicalNotesError),
         FormatLinkPath(links::FormatLinkPathError),
+        ParseFromFilepathError(note::ParseFromFilepathError),
     }
 }
 pub fn open_maintenance_index(config: &Config) -> Result<(), OpenMaintenanceIndexError> {
-    fn invalid_title(config: &Config, note: &PhysicalNote) -> bool {
-        error_union! {
-            enum InvalidTitleError {
-                ReadContentsError(note::ReadContentsError),
-            }
-        }
-        note.read_contents(config)
+    fn has_empty_title(config: &Config, note: &PhysicalNote) -> bool {
+        let title = note
+            .read_contents(config)
             .map_err(|_| ())
             .and_then(|contents| markdown::parse_markdown(&contents).map_err(|_| ()))
             .and_then(|markdown| markdown::parse_frontmatter(&markdown).map_err(|_| ()))
-            .and_then(|frontmatter| markdown::get_title(&frontmatter).map_err(|_| ()))
-            .is_ok()
+            .and_then(|frontmatter| markdown::get_title(&frontmatter).map_err(|_| ()));
+        match title {
+            Ok(t) => t == "",
+            Err(_) => true,
+        }
     }
 
     // TODO: flag files that are only frontmatter
-    fn empty(config: &Config, note: &PhysicalNote) -> bool {
+    fn is_empty(config: &Config, note: &PhysicalNote) -> bool {
         note.read_contents(config).map(|contents| contents.trim_start().trim_end() == "").unwrap_or(false)
     }
+
     // TODO: scan for todos
 
     let notes = list_all_physical_notes(config)?;
@@ -713,7 +714,7 @@ pub fn open_maintenance_index(config: &Config) -> Result<(), OpenMaintenanceInde
         let mut invalid_titles = Vec::new();
         let mut index = 0;
         for note in &notes {
-            if invalid_title(config, note) {
+            if has_empty_title(config, note) {
                 invalid_titles.push(format!("- [unnamed {}]({})", index, links::format_link_path(config, &current_note, &note.path(config))?));
                 index += 1;
             }
@@ -725,7 +726,7 @@ pub fn open_maintenance_index(config: &Config) -> Result<(), OpenMaintenanceInde
         let mut empty_files = Vec::new();
         let mut index = 0;
         for note in &notes {
-            if empty(config, note) {
+            if is_empty(config, note) {
                 empty_files.push(format!("- [empty {}]({})", index, links::format_link_path(config, &current_note, &note.path(config))?));
                 index += 1;
             }
