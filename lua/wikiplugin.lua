@@ -31,7 +31,7 @@ local function insert_link_attach_mappings(prompt_bufnr, map)
         local selection = action_state.get_selected_entry()
         local note_path
         if selection then
-            note_path = selection.note_path
+            note_path = selection.note_path or selection.path or nil
         else
             note_path = nil
         end
@@ -49,32 +49,17 @@ local function search_by_title(attach_mappings, opts)
     pickers.new(opts, {
         prompt_title = "search notes by title",
 
-        finder = finders.new_oneshot_job(
-            {"ag", "^title:", config.home_path}, -- TODO: this does not work perfectly because it can match any 'title: ' that appears outside of the frontmatter but whatever
-            {
-                entry_maker = function(entry)
-                    local parts = vim.split(entry, ':')
-
-                    local note_title = parts[4]:match("^%s*(.-)%s*$") -- TODO: put this into a trim whitespace function
-                    local filepath = vim.fn.fnamemodify(parts[1], ":p")
-
-                    return {
-                        value = entry,
-                        display = note_title,
-                        ordinal = note_title,
-                        note_path = filepath,
-                    }
-                end,
-            }
-        ),
-
+        finder = finders.new_table({
+            results = internal.list_notes_and_titles_for_search(config),
+            entry_maker = function(x) return x end,
+        }),
         sorter = conf.generic_sorter(opts),
         previewer = conf.grep_previewer(opts),
 
         attach_mappings = attach_mappings,
     }):find()
 end
-local function search_by_content(attach_mappings)
+local function search_by_content(attach_mappings, opts)
     local pickers = require "telescope.pickers"
     local finders = require "telescope.finders"
     local conf = require("telescope.config").values
@@ -83,24 +68,10 @@ local function search_by_content(attach_mappings)
     pickers.new(opts, {
         prompt_title = "search notes by content",
 
-        finder = finders.new_oneshot_job(
-            {"ag", "^", config.home_path}, -- this is probably not the best way to do this
-            {
-                entry_maker = function(entry)
-                    local parts = vim.split(entry, ':')
-
-                    local filepath = vim.fn.fnamemodify(parts[1], ":p")
-
-                    return {
-                        value = entry,
-                        display = entry,
-                        ordinal = entry,
-                        note_path = filepath,
-                    }
-                end,
-            }
-        ),
-
+        finder = finders.new_table({
+            results = internal.list_notes_lines_for_search(config),
+            entry_maker = function(x) return x end,
+        }),
         sorter = conf.generic_sorter(opts),
         previewer = conf.grep_previewer(opts),
 

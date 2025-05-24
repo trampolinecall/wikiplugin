@@ -552,3 +552,58 @@ fn list_all_physical_notes(config: &Config) -> Result<Vec<PhysicalNote>, ListAll
         })
         .collect::<Result<Vec<_>, _>>()
 }
+
+pub(crate) fn list_notes_and_titles_for_search(config: &Config) -> Result<Vec<[(&'static str, String); 4]>, ListAllPhysicalNotesError> {
+    Ok(list_all_physical_notes(config)?
+        .into_iter()
+        .map(|physical_note| {
+            // TODO: regularize all error handling
+
+            let path = physical_note.path(config).to_str().unwrap_or_default().to_string(); // TODO: properly deal with this
+            let title = physical_note
+                .read_contents(config)
+                .inspect_err(|err| /* TODO: log that this failed */ {})
+                .ok()
+                .and_then(|contents| markdown::parse_markdown(&contents).inspect_err(|err| /* TODO: log that this has failed */{}).ok())
+                .and_then(|md| {
+                    markdown::parse_frontmatter(&md).inspect_err(|err| /* TODO: log that this has failed */{}).ok()
+                })
+                .and_then(|frontmatter| {
+                    markdown::get_title(&frontmatter).inspect_err(|err| /* TODO: log that this has failed */{}).ok()
+                });
+            [
+                ("value", physical_note.id.clone()),
+                ("display", title.clone().unwrap_or_default()),
+                ("ordinal", title.unwrap_or(physical_note.id.clone())),
+                ("path", path.clone()),
+            ]
+        })
+        .collect())
+}
+
+pub(crate) fn list_notes_lines_for_search(config: &Config) -> Result<Vec<Dictionary>, ListAllPhysicalNotesError> {
+    Ok(list_all_physical_notes(config)?
+        .into_iter()
+        .flat_map(|physical_note| {
+            // TODO: regularize all error handling
+
+            let path = physical_note.path(config).to_str().unwrap_or_default().to_string(); // TODO: properly deal with this
+            physical_note
+                .read_contents(config)
+                .inspect_err(|err| /* TODO: log that this failed */ {})
+                .unwrap_or("".to_string())
+                .lines()
+                .enumerate()
+                .map(|(lnum, line)| {
+                    Dictionary::from_iter([
+                        ("value", nvim_oxi::Object::from(line.to_string())),
+                        ("display", line.to_string().into()),
+                        ("ordinal", format!("{}:{} {}", path, lnum, line).into()),
+                        ("path", path.clone().into()),
+                        ("lnum", ((lnum + 1) as u32).into()),
+                    ])
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect())
+}
