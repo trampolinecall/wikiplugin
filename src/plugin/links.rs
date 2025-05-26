@@ -45,8 +45,8 @@ pub fn format_link_path(config: &Config, current_note: &Note, target_file_path: 
         return Err(FormatLinkPathError::TargetNotAbsolute);
     }
     match current_note {
-        Note::Physical(PhysicalNote { directories: _, id: _ }) => {
-            let current_note_path = current_note.path(config).expect("physical note always has path");
+        Note::Physical(pn @ PhysicalNote { directories: _, id: _ }) => {
+            let current_note_path = pn.path(config);
             let current_file_parent_dir = current_note_path.parent().ok_or(FormatLinkPathError::CurrentFilePathNoParent)?;
             let result = diff_paths(target_file_path, current_file_parent_dir).ok_or(FormatLinkPathError::CouldNotConstructLink)?;
             Ok(result.to_str().ok_or(FormatLinkPathError::PathNotUtf8)?.to_string())
@@ -58,12 +58,9 @@ pub fn format_link_path(config: &Config, current_note: &Note, target_file_path: 
 pub fn resolve_link_path(config: &Config, current_note: &Note, link_path_text: &str) -> Result<PathBuf, ResolveLinkPathError> {
     let link_path = Path::new(link_path_text);
     match current_note {
-        Note::Physical(PhysicalNote { directories: _, id: _ }) => Ok(current_note
-            .path(config)
-            .expect("physical note should always have a path")
-            .parent()
-            .ok_or(ResolveLinkPathError::CurrentNoteNoParent)?
-            .join(link_path)),
+        Note::Physical(pn @ PhysicalNote { directories: _, id: _ }) => {
+            Ok(pn.path(config).parent().ok_or(ResolveLinkPathError::CurrentNoteNoParent)?.join(link_path))
+        }
         Note::Scratch(ScratchNote { buffer: _ }) => {
             // if this is a scratch buffer, there is no current path
             // so we open the target directory if it is absolute, and if not, make it absolute by prepending the config home directory
