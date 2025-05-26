@@ -258,7 +258,9 @@ pub fn insert_link_at_cursor(config: &Config, link_to: &Note, link_text: Option<
 
             let current_note = Note::get_current_note(config)?;
             let link_path_text = links::format_link_path(config, &current_note, &link_to.path(config))?;
-            api::put([format!("[{link_text}]({link_path_text})")].into_iter(), api::types::RegisterType::Charwise, false, true)?;
+            // TODO: this is a workaround because calling api::put directly causes nvim to crash and i cannot figure out why
+            api::command(&format!(r##"lua vim.api.nvim_put({{ "[{link_text}]({link_path_text})" }}, 'c', false, true)"##))?;
+            // api::put([format!("[{link_text}]({link_path_text})")].into_iter(), api::types::RegisterType::Charwise, false, true)?;
 
             Ok(())
         }
