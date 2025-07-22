@@ -212,7 +212,6 @@ pub fn new_note(config: &Config, template: Option<String>, directories: Vec<Stri
     let mut buf = api::create_buf(true, false)?;
     buf.set_name(buf_path.to_str().ok_or(NonUtf8Path)?)?;
     buf.set_lines(0..0, true, buf_contents.lines())?;
-    buf.set_option("filetype", "wikipluginnote")?;
 
     if focus {
         api::set_current_buf(&buf)?;
@@ -287,6 +286,7 @@ pub fn insert_link_at_cursor(config: &Config, link_to: &Note, link_text: Option<
 }
 
 pub fn open_tag_index(config: &Config) -> Result<(), TagIndexError> {
+    // TODO: figure out how to get appropriate keymappings on this file
     let notes = list_all_physical_notes(config)?;
     let mut tag_table: BTreeMap<Tag, Vec<(&PhysicalNote, String, PathBuf)>> = BTreeMap::new(); // TODO: eventually this should become &(Note, String, PathBuf)
     let mut tag_list = BTreeSet::new();
@@ -304,7 +304,7 @@ pub fn open_tag_index(config: &Config) -> Result<(), TagIndexError> {
     }
 
     let mut buffer = api::create_buf(true, true)?;
-    buffer.set_option("filetype", "wikipluginnote")?;
+    buffer.set_option("filetype", "markdown")?;
 
     let mut lines = Vec::new();
     for tag in tag_list {
