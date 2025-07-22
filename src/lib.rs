@@ -34,15 +34,15 @@ fn wikiplugin_internal() -> Dictionary {
     Dictionary::from_iter([
         (
             "new_note",
-            Object::from(Function::from_fn(|(config, directories, focus): (Dictionary, Vec<String>, bool)| {
-                do_function(config, move |config| plugin::new_note(&config, directories, focus).map(|_| ()))
+            Object::from(Function::from_fn(|(config, template, directories, focus): (Dictionary, Option<String>, Vec<String>, bool)| {
+                do_function(config, move |config| plugin::new_note(&config, template, directories, focus).map(|_| ()))
             })),
         ),
         ("open_index", Object::from(Function::from_fn(|config: Dictionary| do_function(config, |config| plugin::open_index(&config))))),
         ("delete_note", Object::from(Function::from_fn(|config: Dictionary| do_function(config, |config| plugin::delete_note())))),
         (
             "new_note_and_insert_link",
-            Object::from(Function::from_fn(|config: Dictionary| do_function(config, |config| plugin::new_note_and_insert_link(&config)))),
+            Object::from(Function::from_fn(|(config, template, directories): (Dictionary, Option<String>, Vec<String>)| do_function(config, |config| plugin::new_note_and_insert_link(&config, template, directories)))),
         ),
         ("open_tag_index", Object::from(Function::from_fn(|config: Dictionary| do_function(config, |config| plugin::open_tag_index(&config))))),
         ("follow_link", Object::from(Function::from_fn(|config: Dictionary| do_function(config, |config| plugin::follow_link(&config))))),

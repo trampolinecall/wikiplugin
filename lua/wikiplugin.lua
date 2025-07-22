@@ -88,9 +88,10 @@ end
 return {
     setup = setup,
 
-    new_note = function(directories, focus) internal.new_note(config, directories, focus) end,
+    new_note = function(directories, focus) internal.new_note(config, nil, directories, focus) end,
+    new_note_from_template = function(template, directories, focus) internal.new_note(config, template, directories, focus) end,
     open_index = function() internal.open_index(config) end,
-    new_note_and_insert_link = function() internal.new_note_and_insert_link(config) end,
+    new_note_and_insert_link = function() internal.new_note_and_insert_link(config, nil, {}) end, -- TODO: figure out a way to allow the user control over these arguments without having to put it everywhere
     delete_note = function() internal.delete_note(config) end,
     open_tag_index = function() internal.open_tag_index(config) end,
     follow_link = function() internal.follow_link(config) end,

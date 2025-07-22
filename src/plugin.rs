@@ -92,12 +92,14 @@ error_union! {
         ApiError(api::Error),
         NonUtf8Path(NonUtf8Path),
         CannotLinkToScratchNote(CannotLinkToScratchNote),
+        IoError(std::io::Error),
     }
 }
 convert_error_union! {
-    ApiErrorOrNonUtf8Path => InsertLinkError {
+    NewNoteError => InsertLinkError {
         ApiError => ApiError,
-        NonUtf8Path => NonUtf8Path
+        NonUtf8Path => NonUtf8Path,
+        IoError => IoError,
     }
 }
 
@@ -166,7 +168,14 @@ error_union! {
     }
 }
 
-pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Result<Note, ApiErrorOrNonUtf8Path> {
+error_union! {
+    pub enum NewNoteError {
+        ApiError(api::Error),
+        NonUtf8Path(NonUtf8Path),
+        IoError(std::io::Error),
+    }
+}
+pub fn new_note(config: &Config, template: Option<String>, directories: Vec<String>, focus: bool) -> Result<Note, NewNoteError> {
     let title: String = nvim_oxi::api::eval(r#"input("note name: ")"#)?;
 
     let now = chrono::Local::now();
@@ -180,20 +189,29 @@ pub fn new_note(config: &Config, directories: Vec<String>, focus: bool) -> Resul
         p
     };
 
-    // TODO: customizable templates?
-    let buf_contents = [
-        "---".to_string(),
-        format!("title: {title}"),
-        format!("date: {}", now.format(&config.date_format)),
-        format!("time: {}", now.format(&config.time_format)),
-        "tags:".to_string(),
-        "---".to_string(),
-    ]
-    .to_vec();
+    let buf_contents =
+        if let Some(template) = template {
+        let template_path = config.home_path.join(template);
+        let mut template_contents = std::fs::read_to_string(template_path)?;
+
+        let substitutions = [
+            ("title", title),
+            ("date", now.format(&config.date_format).to_string()),
+            ("time", now.format(&config.time_format).to_string()),
+        ];
+
+        for (sub, repl) in substitutions {
+            template_contents = template_contents.replace(&("{".to_string() + sub + "}"), &repl);
+        }
+
+        template_contents
+    } else {
+        String::new()
+    };
 
     let mut buf = api::create_buf(true, false)?;
     buf.set_name(buf_path.to_str().ok_or(NonUtf8Path)?)?;
-    buf.set_lines(0..0, true, buf_contents)?;
+    buf.set_lines(0..0, true, buf_contents.lines())?;
     buf.set_option("filetype", "wikipluginnote")?;
 
     if focus {
@@ -211,8 +229,8 @@ pub fn open_index(config: &Config) -> Result<(), ApiErrorOrNonUtf8Path> {
     Ok(())
 }
 
-pub fn new_note_and_insert_link(config: &Config) -> Result<(), InsertLinkError> {
-    let new_note = new_note(config, Vec::new(), false)?;
+pub fn new_note_and_insert_link(config: &Config, template: Option<String>, directories: Vec<String>) -> Result<(), InsertLinkError> {
+    let new_note = new_note(config, template, directories, false)?;
     insert_link_at_cursor(config, &new_note, None)?;
     Ok(())
 }
@@ -236,7 +254,7 @@ pub fn insert_link_to_path_at_cursor_or_create(config: &Config, link_to: Option<
 pub fn insert_link_at_cursor_or_create(config: &Config, link_to: Option<&Note>, link_text: Option<String>) -> Result<(), InsertLinkError> {
     let note = match link_to {
         Some(link_to) => link_to,
-        None => &new_note(config, Vec::new(), false)?,
+        None => &new_note(config, None, Vec::new(), false)?, // TODO: figure out a cleaner way to pass these arguments instead of assuming a default
     };
     insert_link_at_cursor(config, note, link_text)?;
     Ok(())
