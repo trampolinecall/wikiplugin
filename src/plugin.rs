@@ -3,7 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nvim_oxi::{api, Dictionary};
+use nvim_oxi::{
+    api::{self, opts::CmdOpts, types::CmdInfos},
+    Dictionary,
+};
 
 use crate::plugin::note::{Note, PhysicalNote, Tag};
 
@@ -181,7 +184,7 @@ pub fn new_note(config: &Config, template: Option<String>, directories: Vec<Stri
     let now = chrono::Local::now();
     let note_id = now.format(&config.note_id_timestamp_format).to_string();
 
-    let buf_path = {
+    let note_path = {
         let mut p = config.home_path.clone();
         p.extend(&directories);
         p.push(&note_id);
@@ -189,16 +192,12 @@ pub fn new_note(config: &Config, template: Option<String>, directories: Vec<Stri
         p
     };
 
-    let buf_contents =
-        if let Some(template) = template {
+    let note_contents = if let Some(template) = template {
         let template_path = config.home_path.join(template);
         let mut template_contents = std::fs::read_to_string(template_path)?;
 
-        let substitutions = [
-            ("title", title),
-            ("date", now.format(&config.date_format).to_string()),
-            ("time", now.format(&config.time_format).to_string()),
-        ];
+        let substitutions =
+            [("title", title), ("date", now.format(&config.date_format).to_string()), ("time", now.format(&config.time_format).to_string())];
 
         for (sub, repl) in substitutions {
             template_contents = template_contents.replace(&("{".to_string() + sub + "}"), &repl);
@@ -209,12 +208,10 @@ pub fn new_note(config: &Config, template: Option<String>, directories: Vec<Stri
         String::new()
     };
 
-    let mut buf = api::create_buf(true, false)?;
-    buf.set_name(buf_path.to_str().ok_or(NonUtf8Path)?)?;
-    buf.set_lines(0..0, true, buf_contents.lines())?;
+    std::fs::write(&note_path, note_contents)?;
 
     if focus {
-        api::set_current_buf(&buf)?;
+        api::cmd(&CmdInfos::builder().cmd("edit").args([note_path.to_str().ok_or(NonUtf8Path)?]).build(), &CmdOpts::builder().build())?;
     }
 
     Ok(Note::new_physical(directories, note_id))
