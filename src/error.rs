@@ -58,5 +58,5 @@ pub fn print_error(err: &dyn Error) {
     }
 
     api::err_writeln(&err_str);
-    log::error!("{}", err_str);
+    log::error!("{err_str}");
 }

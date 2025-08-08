@@ -112,7 +112,7 @@ impl PhysicalNote {
         let mut current_buf = None;
         for buf in buflist {
             let buf_number = &buf.handle();
-            let buf_path: String = nvim_oxi::api::eval(&format!(r##"expand("#{}:p")"##, buf_number))?;
+            let buf_path: String = nvim_oxi::api::eval(&format!(r##"expand("#{buf_number}:p")"##))?;
             let buf_path = Path::new(&buf_path);
             if buf_path == self.path(config) {
                 current_buf = Some(buf);
