@@ -5,13 +5,34 @@ use std::{
 
 use nvim_oxi::api::{self, Buffer};
 
-use crate::plugin::Config;
+use crate::plugin::{
+    filetype::{Filetype, FiletypeRegistry, SomeFiletype},
+    Config,
+};
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PhysicalNote {
     pub directories: Vec<String>,
     pub id: String,
+    pub filetype: SomeFiletype,
 }
+
+impl PartialOrd for PhysicalNote {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for PhysicalNote {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.directories.cmp(&other.directories).then(self.id.cmp(&other.id)).then(self.filetype.type_id().cmp(&other.filetype.type_id()))
+    }
+}
+impl PartialEq for PhysicalNote {
+    fn eq(&self, other: &Self) -> bool {
+        self.directories == other.directories && self.id == other.id && self.filetype.type_id() == other.filetype.type_id()
+    }
+}
+impl Eq for PhysicalNote {}
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct ScratchNote {
@@ -33,6 +54,8 @@ pub enum ParseFromFilepathError {
     NoFileStem,
     NoPathParent,
     OsStringNotValidString,
+    NoExtension,
+    InvalidFiletype,
 }
 impl Display for ParseFromFilepathError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,7 +64,7 @@ impl Display for ParseFromFilepathError {
             ParseFromFilepathError::FileNotWithinWikiDir => write!(f, "file is not within wiki directory"),
             ParseFromFilepathError::NoFileStem => write!(f, "file does not have stem"),
             ParseFromFilepathError::NoPathParent => write!(f, "path does not have parent"),
-            ParseFromFilepathError::OsStringNotValidString => write!(f, "os strings are not valid strings"),
+            ParseFromFilepathError::OsStringNotValidString => write!(f, "os string was not a valid string"),
         }
     }
 }
@@ -58,6 +81,13 @@ error_union! {
         NvimApi(api::Error),
         ParseFromFilepathError(ParseFromFilepathError),
     }
+}
+
+// TODO: make this stored in the config and don't put it here
+fn ft_reg() -> FiletypeRegistry {
+    let mut ftreg = FiletypeRegistry::new();
+    // TODO: ftreg.register(Markdown)
+    ftreg
 }
 
 impl PhysicalNote {
@@ -87,6 +117,11 @@ impl PhysicalNote {
                 .to_str()
                 .ok_or(ParseFromFilepathError::OsStringNotValidString)?
                 .to_string(),
+            filetype: ft_reg()
+                .look_up_extension(
+                    path.extension().ok_or(ParseFromFilepathError::NoExtension)?.to_str().ok_or(ParseFromFilepathError::OsStringNotValidString)?,
+                )
+                .ok_or(ParseFromFilepathError::InvalidFiletype)?,
         })
     }
 
@@ -140,6 +175,7 @@ impl PhysicalNote {
     }
 }
 impl Note {
+    // TODO: remove this?
     pub fn new_physical(directories: Vec<String>, id: String) -> Note {
         Note::Physical(PhysicalNote { directories, id })
     }
