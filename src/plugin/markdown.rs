@@ -55,14 +55,14 @@ pub fn parse_frontmatter(md: &mdast::Node) -> Result<Yaml, InvalidFrontmatter> {
 pub enum GetFrontmatterFieldError {
     NotHashTable,
     NoField(&'static str),
-    FieldWrongType { expected_type: &'static str },
+    FieldWrongType { field_name: &'static str, expected_type: &'static str },
 }
 impl std::fmt::Display for GetFrontmatterFieldError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GetFrontmatterFieldError::NotHashTable => write!(f, "frontmatter is not hash table"),
             GetFrontmatterFieldError::NoField(field) => write!(f, "no field called '{field}'"),
-            GetFrontmatterFieldError::FieldWrongType { expected_type } => write!(f, "frontmatter field type is not {expected_type}"),
+            GetFrontmatterFieldError::FieldWrongType { field_name, expected_type } => write!(f, "frontmatter '{field_name}' is not of type {expected_type}"),
         }
     }
 }
@@ -73,7 +73,7 @@ pub fn get_title(frontmatter: &Yaml) -> Result<String, GetFrontmatterFieldError>
         .get(&Yaml::String("title".to_string()))
         .ok_or(GetFrontmatterFieldError::NoField("title"))?
         .as_str()
-        .ok_or(GetFrontmatterFieldError::FieldWrongType { expected_type: "string" })?
+        .ok_or(GetFrontmatterFieldError::FieldWrongType { field_name: "title", expected_type: "string" })?
         .to_string())
 }
 
@@ -126,8 +126,8 @@ pub fn get_tags(frontmatter: &Yaml) -> Result<Vec<Tag>, GetFrontmatterFieldError
             .iter()
             .map(|tag| Some(Tag::parse_from_str(tag.as_str()?)))
             .collect::<Option<Vec<_>>>()
-            .ok_or(GetFrontmatterFieldError::FieldWrongType { expected_type: "array of strings (or string)" })?),
-        _ => Err(GetFrontmatterFieldError::FieldWrongType { expected_type: "array of strings or string" }),
+            .ok_or(GetFrontmatterFieldError::FieldWrongType { field_name: "tags", expected_type: "array of strings (or string)" })?),
+        _ => Err(GetFrontmatterFieldError::FieldWrongType { field_name: "tags", expected_type: "array of strings or string" }),
     }
 }
 

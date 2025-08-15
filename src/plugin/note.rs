@@ -229,6 +229,12 @@ impl Tag {
     pub fn parse_from_str(s: &str) -> Tag {
         Tag(s.split("::").map(ToString::to_string).collect())
     }
+
+    pub fn included_under(&self, filter_tag: &Tag) -> bool {
+        // a tag falls under another tag if it is equal to the filter tag or if the filter tag is a prefix of the tag
+        // so a tag like a::b::c does fall under a::b because a::b is a prefix of it
+        self.0.starts_with(&filter_tag.0)
+    }
 }
 impl Display for Tag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
