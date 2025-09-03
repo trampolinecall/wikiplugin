@@ -127,6 +127,7 @@ pub fn get_tags(frontmatter: &Yaml) -> Result<Vec<Tag>, GetFrontmatterFieldError
             .map(|tag| Some(Tag::parse_from_str(tag.as_str()?)))
             .collect::<Option<Vec<_>>>()
             .ok_or(GetFrontmatterFieldError::FieldWrongType { field_name: "tags", expected_type: "array of strings (or string)" })?),
+        Yaml::Null => Ok(Vec::new()),
         _ => Err(GetFrontmatterFieldError::FieldWrongType { field_name: "tags", expected_type: "array of strings or string" }),
     }
 }
