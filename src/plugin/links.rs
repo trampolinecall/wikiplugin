@@ -45,7 +45,7 @@ pub fn format_link_path(config: &Config, current_note: &Note, target_file_path: 
         return Err(FormatLinkPathError::TargetNotAbsolute);
     }
     match current_note {
-        Note::Physical(pn @ PhysicalNote { directories: _, id: _ }) => {
+        Note::Physical(pn @ PhysicalNote { directories: _, id: _, filetype: _ }) => {
             let current_note_path = pn.path(config);
             let current_file_parent_dir = current_note_path.parent().ok_or(FormatLinkPathError::CurrentFilePathNoParent)?;
             let result = diff_paths(target_file_path, current_file_parent_dir).ok_or(FormatLinkPathError::CouldNotConstructLink)?;
@@ -58,7 +58,7 @@ pub fn format_link_path(config: &Config, current_note: &Note, target_file_path: 
 pub fn resolve_link_path(config: &Config, current_note: &Note, link_path_text: &str) -> Result<PathBuf, ResolveLinkPathError> {
     let link_path = Path::new(link_path_text);
     match current_note {
-        Note::Physical(pn @ PhysicalNote { directories: _, id: _ }) => {
+        Note::Physical(pn @ PhysicalNote { directories: _, id: _, filetype: _ }) => {
             Ok(pn.path(config).parent().ok_or(ResolveLinkPathError::CurrentNoteNoParent)?.join(link_path))
         }
         Note::Scratch(ScratchNote { buffer: _ }) => {

@@ -11,28 +11,28 @@ use crate::plugin::{
 };
 
 #[derive(Debug, Clone)]
-pub struct PhysicalNote {
+pub struct PhysicalNote<'fr> {
     pub directories: Vec<String>,
     pub id: String,
-    pub filetype: SomeFiletype,
+    pub filetype: SomeFiletype<'fr>,
 }
 
-impl PartialOrd for PhysicalNote {
+impl<'fr> PartialOrd for PhysicalNote<'fr> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for PhysicalNote {
+impl<'fr> Ord for PhysicalNote<'fr> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.directories.cmp(&other.directories).then(self.id.cmp(&other.id)).then(self.filetype.type_id().cmp(&other.filetype.type_id()))
+        self.directories.cmp(&other.directories).then(self.id.cmp(&other.id)).then(self.filetype.cmp(&other.filetype))
     }
 }
-impl PartialEq for PhysicalNote {
+impl<'fr> PartialEq for PhysicalNote<'fr> {
     fn eq(&self, other: &Self) -> bool {
-        self.directories == other.directories && self.id == other.id && self.filetype.type_id() == other.filetype.type_id()
+        self.directories == other.directories && self.id == other.id && self.filetype == other.filetype
     }
 }
-impl Eq for PhysicalNote {}
+impl<'fr> Eq for PhysicalNote<'fr> {}
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct ScratchNote {
@@ -40,8 +40,8 @@ pub struct ScratchNote {
 }
 
 #[derive(PartialEq, Eq, Clone)]
-pub enum Note {
-    Physical(PhysicalNote),
+pub enum Note<'fr> {
+    Physical(PhysicalNote<'fr>),
     Scratch(ScratchNote),
 }
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone)]
@@ -83,15 +83,8 @@ error_union! {
     }
 }
 
-// TODO: make this stored in the config and don't put it here
-fn ft_reg() -> FiletypeRegistry {
-    let mut ftreg = FiletypeRegistry::new();
-    // TODO: ftreg.register(Markdown)
-    ftreg
-}
-
-impl PhysicalNote {
-    pub fn parse_from_filepath(config: &Config, path: &Path) -> Result<PhysicalNote, ParseFromFilepathError> {
+impl<'fr> PhysicalNote<'fr> {
+    pub fn parse_from_filepath<'cfg: 'fr>(config: &'cfg Config, path: &Path) -> Result<PhysicalNote<'fr>, ParseFromFilepathError> {
         let path_abs_canon = if path.is_absolute() {
             path.canonicalize().map_err(ParseFromFilepathError::CannotCanonicalize)?
         } else {
@@ -117,7 +110,8 @@ impl PhysicalNote {
                 .to_str()
                 .ok_or(ParseFromFilepathError::OsStringNotValidString)?
                 .to_string(),
-            filetype: ft_reg()
+            filetype: config
+                .filetypes
                 .look_up_extension(
                     path.extension().ok_or(ParseFromFilepathError::NoExtension)?.to_str().ok_or(ParseFromFilepathError::OsStringNotValidString)?,
                 )
@@ -174,10 +168,10 @@ impl PhysicalNote {
         }
     }
 }
-impl Note {
+impl<'fr> Note<'fr> {
     // TODO: remove this?
-    pub fn new_physical(directories: Vec<String>, id: String) -> Note {
-        Note::Physical(PhysicalNote { directories, id })
+    pub fn new_physical(directories: Vec<String>, id: String, filetype: SomeFiletype<'fr>) -> Note<'fr> {
+        Note::Physical(PhysicalNote { directories, id, filetype })
     }
 
     pub fn get_current_note(config: &Config) -> Result<Note, GetCurrentNoteError> {
@@ -239,7 +233,7 @@ impl Note {
 
     pub fn get_id(&self) -> Option<&str> {
         match self {
-            Note::Physical(PhysicalNote { directories: _, id }) => Some(id),
+            Note::Physical(PhysicalNote { directories: _, id, filetype: _ }) => Some(id),
             Note::Scratch(ScratchNote { buffer: _ }) => None,
         }
     }

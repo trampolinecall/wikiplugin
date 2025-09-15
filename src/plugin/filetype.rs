@@ -1,27 +1,43 @@
-use std::{any::Any, collections::BTreeMap, fmt::Debug};
+use std::{collections::BTreeMap, fmt::Debug};
 
-pub trait Filetype: Debug + Any {
-    fn extension(&self) -> &'static str;
+#[derive(Debug)]
+pub struct Filetype {
+    pub extension: String,
 }
 
-pub type SomeFiletype = &'static dyn Filetype;
+#[derive(Debug, Clone, Copy)]
+pub struct SomeFiletype<'fr>(&'fr Filetype);
+impl<'fr> PartialEq for SomeFiletype<'fr> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+impl<'fr> Eq for SomeFiletype<'fr> {}
+impl<'fr> PartialOrd for SomeFiletype<'fr> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<'fr> Ord for SomeFiletype<'fr> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.0 as *const Filetype).addr().cmp(&(other.0 as *const Filetype).addr())
+    }
+}
 
 pub struct FiletypeRegistry {
-    registered: Vec<SomeFiletype>,
-    extension_mapping: BTreeMap<&'static str, SomeFiletype>,
+    registered: BTreeMap<String, Filetype>,
 }
 
 impl FiletypeRegistry {
     pub fn new() -> Self {
-        Self { registered: Vec::new(), extension_mapping: BTreeMap::new() }
+        Self { registered: BTreeMap::new() }
     }
 
-    pub fn register(&mut self, ft: SomeFiletype) {
-        self.registered.push(ft);
-        self.extension_mapping.insert(ft.extension(), ft);
+    pub fn register(&mut self, ft: Filetype) {
+        self.registered.insert(ft.extension.clone(), ft);
     }
 
     pub fn look_up_extension(&self, ext: &str) -> Option<SomeFiletype> {
-        self.extension_mapping.get(ext).copied()
+        self.registered.get(ext).map(SomeFiletype)
     }
 }
